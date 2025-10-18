@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ethash WebGPU - Standalone</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #4ec9b0;
+        }
+        #log {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 15px;
+            height: 400px;
+            overflow-y: auto;
+            font-size: 12px;
+            line-height: 1.5;
+            margin: 20px 0;
+        }
+        .log-entry {
+            margin: 4px 0;
+        }
+        .log-info {
+            color: #4ec9b0;
+        }
+        .log-error {
+            color: #f48771;
+        }
+        .log-success {
+            color: #6a9955;
+        }
+        .log-warn {
+            color: #dcdcaa;
+        }
+        button {
+            background: #007acc;
+            color: #fff;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: monospace;
+            margin: 5px 5px 5px 0;
+        }
+        button:hover {
+            background: #005a9e;
+        }
+        button:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        .status {
+            padding: 10px;
+            background: #252526;
+            border-left: 3px solid #4ec9b0;
+            margin: 10px 0;
+            border-radius: 2px;
+        }
+        #progress-container {
+            margin: 20px 0;
+        }
+        .progress-item {
+            background: #252526;
+            border: 1px solid #3e3e42;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        .progress-label {
+            color: #4ec9b0;
+            font-size: 12px;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        .progress-bar-bg {
+            background: #1e1e1e;
+            border: 1px solid #3e3e42;
+            border-radius: 2px;
+            height: 20px;
+            overflow: hidden;
+            position: relative;
+        }
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #007acc, #4ec9b0);
+            height: 100%;
+            transition: width 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 5px;
+            color: #fff;
+            font-size: 11px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔗 Ethash WebGPU - Standalone</h1>
+
+    <div class="controls">
+        <button id="initBtn">Step 1: Init WebGPU</button>
+        <button id="step2Btn" data-step="2" disabled>Step 2: Shader Test</button>
+        <button id="step3Btn" data-step="3" disabled>Step 3: Keccak</button>
+        <button id="step4Btn" data-step="4" disabled>Step 4: DAG Gen</button>
+        <button id="step5Btn" data-step="5" disabled>Step 5: Validate</button>
+        <button id="step6Btn" data-step="6" disabled>Step 6: FNV/Memory</button>
+        <br>
+        <button id="runAllBtn" data-step="all" disabled>Run All Steps</button>
+        <button id="clearBtn">Clear Log</button>
+    </div>
+
+    <div class="status" id="status">
+        Waiting for initialization...
+    </div>
+
+    <div id="progress-container"></div>
+    <div id="log"></div>
+
+    <script type="module" src="./main.ts"></script>
+</body>
+</html>

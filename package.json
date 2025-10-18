@@ -1,0 +1,24 @@
+{
+  "name": "ethash-webgpu",
+  "version": "0.1.0",
+  "description": "Browser-based Ethash implementation using WebGPU",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:standalone": "vite build && echo '✓ Standalone HTML generated at: ./standalone.html'",
+    "preview": "vite preview",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "js-sha3": "^0.9.3",
+    "keccak256": "^1.0.6"
+  }
+}
