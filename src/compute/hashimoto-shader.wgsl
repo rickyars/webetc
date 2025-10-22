@@ -74,8 +74,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
   // Next 8 bytes: reversed nonce
   // After full 8-byte reversal: positions 0-3 have reversed_hi, positions 4-7 have reversed_lo
-  keccak_input[8u] = nonce_hi_reversed;
-  keccak_input[9u] = nonce_lo_reversed;
+  // Keccak input order: [header (8 u32) || nonce_lo_reversed (1 u32) || nonce_hi_reversed (1 u32)]
+  keccak_input[8u] = nonce_lo_reversed;
+  keccak_input[9u] = nonce_hi_reversed;
 
   // Padding for Keccak-512 (72-byte rate = 18 u32)
   // Byte 40 (u32[10] byte 0): 0x01
