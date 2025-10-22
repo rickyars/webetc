@@ -85,23 +85,22 @@ export async function runDifficultyFilterGPU(
   new Uint32Array(validCountBuffer.getMappedRange()).set([0]);
   validCountBuffer.unmap();
 
-  // Parameters buffer - struct with proper alignment
-  // Layout: num_hashes (u32) + unused (u32) + threshold array (8 x u32)
-  // Total: 40 bytes (2 + 8 u32s, aligned to 16 bytes)
+  // Parameters buffer - storage buffer (no alignment restrictions)
+  // Layout: array<u32, 10> where [0]=num_hashes, [1]=unused, [2..9]=threshold
   const paramsBuffer = device.createBuffer({
     size: 40,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
   });
   const paramsData = new Uint32Array(paramsBuffer.getMappedRange());
 
-  // Struct members:
-  paramsData[0] = numHashes;      // num_hashes
-  paramsData[1] = 0;               // unused
+  paramsData[0] = numHashes;      // params[0] = num_hashes
+  paramsData[1] = 0;               // params[1] = unused
 
   // Convert difficulty to max_hash threshold (full 256-bit value)
   // The difficulty parameter is a 256-bit BigInt (e.g., 2^255)
   // We need to store all 8 u32s that represent this value in little-endian
+  // Store at params[2..9]
   for (let i = 0; i < 8; i++) {
     const shift = BigInt(i * 32);
     const mask = BigInt(0xffffffff);
