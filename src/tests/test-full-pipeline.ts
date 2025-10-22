@@ -139,34 +139,35 @@ async function testFullPipeline() {
         const cpuResult = ethash.run(headerHash, nonce, ethash.fullSize);
 
         // Verify hash correctness
-      const hashBytes = batchResult.results.find(r =>
-        Array.from(r.nonce).every((b, j) => b === nonce[j])
-      )?.hash;
+        const hashBytes = batchResult.results.find(r =>
+          Array.from(r.nonce).every((b, j) => b === nonce[j])
+        )?.hash;
 
-      if (!hashBytes) {
-        log(`✗ Winner ${i}: Could not find corresponding GPU hash`);
-        allValid = false;
-        validationErrors++;
-        continue;
-      }
+        if (!hashBytes) {
+          log(`✗ Winner ${i}: Could not find corresponding GPU hash`);
+          allValid = false;
+          validationErrors++;
+          continue;
+        }
 
-      const gpuHashHex = Array.from(hashBytes)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-      const cpuHashHex = Array.from(cpuResult.hash)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
+        const gpuHashHex = Array.from(hashBytes)
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
+        const cpuHashHex = Array.from(cpuResult.hash)
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
 
-      const hashMatch = gpuHashHex === cpuHashHex;
-      const status = hashMatch ? '✓' : '✗';
+        const hashMatch = gpuHashHex === cpuHashHex;
+        const status = hashMatch ? '✓' : '✗';
 
-      log(`${status} Winner ${i}: ${cpuHashHex.slice(0, 16)}...`);
+        log(`${status} Winner ${i}: ${cpuHashHex.slice(0, 16)}...`);
 
-      if (!hashMatch) {
-        log(`  GPU: ${gpuHashHex.slice(0, 16)}...`);
-        log(`  CPU: ${cpuHashHex.slice(0, 16)}...`);
-        allValid = false;
-        validationErrors++;
+        if (!hashMatch) {
+          log(`  GPU: ${gpuHashHex.slice(0, 16)}...`);
+          log(`  CPU: ${cpuHashHex.slice(0, 16)}...`);
+          allValid = false;
+          validationErrors++;
+        }
       }
     }
 
