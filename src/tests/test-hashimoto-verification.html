@@ -43,8 +43,8 @@
     <div id="log"></div>
 
     <script type="module">
-      import { setupHashimotoGPU, runHashimotoBatchGPU } from '../gpu/hashimoto.js';
-      import { createGPUDevice } from '../gpu/device-helper.js';
+      import { setupHashimotoGPU, runHashimotoBatchGPU } from '../gpu/hashimoto';
+      import { createGPUDevice } from '../gpu/device-helper';
       import { keccak256 } from 'ethereum-cryptography/keccak.js';
 
       const logEl = document.getElementById('log');
