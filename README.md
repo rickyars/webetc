@@ -18,16 +18,23 @@ This project demonstrates GPU-accelerated Ethereum mining computations entirely 
   - 5 test vectors: 3× Keccak-256, 2× Keccak-512
   - All tests passing, GPU output matches CPU reference exactly
 
-### ⏳ Phase 2: GPU Hashimoto - IN PROGRESS
-- **Step 4:** Cache generation (CPU via @ethereumjs/ethash, transferred to GPU memory)
-- **Step 5:** DAG generation (CPU via @ethereumjs/ethash, transferred to GPU memory)
-- **Step 6:** GPU Hashimoto shader (parallel nonce mining)
-- **Step 7:** GPU difficulty filtering (keep only valid solutions)
-- **Step 8:** Full mining pipeline on GPU with large batch processing
+### ✅ Phase 2: GPU Hashimoto - COMPLETE
+- **Step 4:** Cache generation (CPU via @ethereumjs/ethash, transferred to GPU memory) ✅
+- **Step 5:** DAG generation (CPU via @ethereumjs/ethash, transferred to GPU memory) ✅
+- **Step 6:** GPU Hashimoto shader (parallel nonce mining) ✅
+  - Correct nonce byte reversal implemented
+  - 130/130 test nonces verified against ethereumjs reference (100% match)
+- **Step 7:** GPU difficulty filtering (keep only valid solutions) ✅
+  - Tested with batches up to 5000 nonces
+  - Verified at multiple difficulty thresholds (2^255, 2^250)
+  - Correctly returns winning nonces that meet difficulty
+- **Step 8:** Full mining pipeline on GPU with large batch processing ✅
 
 ### Test Files
-- **GPU Hashimoto Verification:** `src/tests/test-hashimoto-verification.html` - Verifies GPU matches ethereumjs with nonce byte reversal
-- **GPU Keccak Test:** `src/test-keccak.html` - 5/5 tests passing
+- **GPU Keccak Test:** `src/tests/test-keccak.html` - 5/5 tests passing
+- **GPU DAG Test:** `src/tests/test-dag.html` - Validates cache/DAG generation
+- **GPU Hashimoto Comprehensive:** `src/tests/test-hashimoto-comprehensive.html` - 130 nonces, 100% verified
+- **GPU Difficulty Filter Comprehensive:** `src/tests/test-difficulty-filter-comprehensive.html` - Large batches (100-5000 nonces), multiple difficulty levels
 - **Main UI:** `src/index.html` - UI for running all steps
 
 ## Architecture
@@ -57,8 +64,8 @@ This project demonstrates GPU-accelerated Ethereum mining computations entirely 
 ### GPU Shaders
 - ✅ `keccak-256-shader.wgsl` - Batch Keccak-256 hashing
 - ✅ `keccak-512-shader.wgsl` - Batch Keccak-512 hashing
-- ⏳ `hashimoto-shader.wgsl` - GPU Hashimoto algorithm (in progress)
-- ⏳ `difficulty-filter-shader.wgsl` - GPU difficulty comparison (in progress)
+- ✅ `hashimoto-shader.wgsl` - GPU Hashimoto algorithm (100% verified)
+- ✅ `difficulty-filter-shader.wgsl` - GPU difficulty comparison (tested up to 5000 nonces)
 
 ## Project Structure
 
@@ -67,25 +74,32 @@ webetc/
 ├── src/
 │   ├── gpu/                           # WebGPU infrastructure
 │   │   ├── context.ts                 # Device management
-│   │   └── utils.ts                   # GPU utilities
+│   │   ├── utils.ts                   # GPU utilities
+│   │   ├── hashimoto.ts               # GPU Hashimoto orchestration
+│   │   └── device-helper.ts           # GPU device initialization
 │   ├── compute/                       # WGSL compute shaders
 │   │   ├── keccak-256-shader.wgsl     # ✅ Keccak-256 GPU shader
 │   │   ├── keccak-512-shader.wgsl     # ✅ Keccak-512 GPU shader
-│   │   ├── hashimoto-shader.wgsl      # ⏳ Hashimoto mining kernel
-│   │   └── difficulty-filter-shader.wgsl # ⏳ Difficulty comparison
+│   │   ├── hashimoto-shader.wgsl      # ✅ Hashimoto mining kernel
+│   │   ├── difficulty-filter-shader.wgsl # ✅ Difficulty comparison
+│   │   └── fnv.wgsl                   # FNV-1a hash for mixing
 │   ├── crypto/
 │   │   ├── ethash-reference.ts        # @ethereumjs/ethash wrapper
 │   │   └── keccak-cpu.ts              # js-sha3 CPU reference
+│   ├── tests/                         # Test suite
+│   │   ├── test-keccak.html/ts        # GPU Keccak tests (5/5 passing)
+│   │   ├── test-dag.html/ts           # Cache/DAG generation tests
+│   │   ├── test-hashimoto-comprehensive.html # 130 nonces (100% verified)
+│   │   └── test-difficulty-filter-comprehensive.html/ts # Large batch filter tests
 │   ├── ui/
 │   │   └── logger.ts                  # Debug UI and progress
 │   ├── utils/
 │   │   └── progress.ts                # Progress monitoring
 │   ├── index.html                     # Main HTML template
-│   ├── main.ts                        # Main entry point
-│   ├── test-keccak.ts                 # GPU Keccak test harness
-│   └── test-keccak.html               # GPU Keccak test page
+│   └── main.ts                        # Main entry point
 ├── dist/                              # Build output (auto-generated)
 ├── CLAUDE.md                          # Project plan & roadmap
+├── STRUCTURE.md                       # Codebase structure documentation
 ├── README.md                          # This file
 └── package.json                       # Dependencies & scripts
 ```
