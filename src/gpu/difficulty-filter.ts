@@ -85,9 +85,9 @@ export async function runDifficultyFilterGPU(
   new Uint32Array(validCountBuffer.getMappedRange()).set([0]);
   validCountBuffer.unmap();
 
-  // Parameters buffer
+  // Parameters buffer - expand to hold full 256-bit threshold
   const paramsBuffer = device.createBuffer({
-    size: 16, // vec4<u32>
+    size: 40, // num_hashes (u32) + unused (u32) + 8 u32s for full 256-bit threshold
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
   });
@@ -95,17 +95,14 @@ export async function runDifficultyFilterGPU(
   paramsData[0] = numHashes;
   paramsData[1] = 0; // unused
 
-  // Convert difficulty to max_hash threshold
-  // max_hash = 2^256 / difficulty
-  // Since 2^256 is represented as [0, 0, ..., 0, 1] in little-endian u32 array
-  // We compute: 2^256 / difficulty
-  // For simplicity, we'll use a pre-computed value or compute it as BigInt
-  // For most practical Ethereum difficulties, we can directly pass the max_hash value
-  //
-  // Note: The difficulty parameter passed in should already be the target (max_hash)
-  // not the raw difficulty. The caller should compute this as: max_hash = 2^256 / difficulty
-  paramsData[2] = Number(difficulty & BigInt(0xffffffff));
-  paramsData[3] = Number((difficulty >> BigInt(32)) & BigInt(0xffffffff));
+  // Convert difficulty to max_hash threshold (full 256-bit value)
+  // The difficulty parameter is a 256-bit BigInt (e.g., 2^255)
+  // We need to store all 8 u32s that represent this value in little-endian
+  for (let i = 0; i < 8; i++) {
+    const shift = BigInt(i * 32);
+    const mask = BigInt(0xffffffff);
+    paramsData[2 + i] = Number((difficulty >> shift) & mask);
+  }
   paramsBuffer.unmap();
 
   // Create compute pipeline

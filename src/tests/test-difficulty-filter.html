@@ -3,75 +3,72 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GPU Difficulty Filter Test</title>
-  <script>
-    // Helper function for device creation with fallback limits
-    async function createGPUDevice() {
-      const adapter = await navigator.gpu?.requestAdapter();
-      if (!adapter) {
-        throw new Error('WebGPU not available');
-      }
-
-      // Try generous limits first, fallback to lower if needed
-      const limitConfigs = [
-        { maxBufferSize: 6442450944, maxStorageBufferBindingSize: 2147483648 }, // 6GB / 2GB
-        { maxBufferSize: 4294967296, maxStorageBufferBindingSize: 1073741824 }, // 4GB / 1GB
-        { maxBufferSize: 2147483644, maxStorageBufferBindingSize: 1073741824 }, // 2GB / 1GB
-      ];
-
-      for (const limits of limitConfigs) {
-        try {
-          const device = await adapter.requestDevice({ requiredLimits: limits });
-          return device;
-        } catch (e) {
-          // Try next configuration
-          continue;
-        }
-      }
-
-      throw new Error('Failed to create GPU device with any buffer limit');
-    }
-  </script>
+  <title>Difficulty Filter Diagnostic Test</title>
   <style>
-    body {
-      font-family: monospace;
-      background: #1e1e1e;
-      color: #d4d4d4;
-      padding: 20px;
+    * {
       margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
-    #log {
-      background: #252526;
-      border: 1px solid #3e3e42;
-      padding: 15px;
-      border-radius: 4px;
-      height: 600px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      word-wrap: break-word;
+
+    body {
+      font-family: 'Monaco', 'Courier New', monospace;
+      background: #0a0e27;
+      color: #e0e0e0;
+      padding: 20px;
+      line-height: 1.5;
     }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
     h1 {
-      color: #4fc3f7;
+      color: #00ff88;
       margin-bottom: 10px;
     }
-    .warning {
-      background: #5a4a00;
-      border-left: 4px solid #ffcc00;
-      padding: 10px;
-      margin: 10px 0;
+
+    .subtitle {
+      color: #888;
+      margin-bottom: 20px;
+    }
+
+    #log {
+      background: #0f1419;
+      border: 1px solid #2a3f5f;
+      padding: 15px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 0.85em;
+      max-height: 80vh;
+      overflow-y: auto;
+      line-height: 1.4;
+    }
+
+    #log::after {
+      content: '█';
+      animation: blink 1s infinite;
+    }
+
+    @keyframes blink {
+      0%, 49% {
+        opacity: 1;
+      }
+      50%, 100% {
+        opacity: 0;
+      }
     }
   </style>
 </head>
 <body>
-  <h1>🔍 GPU Difficulty Filter Test</h1>
-
-  <div class="warning">
-    <strong>⚠️ WARNING:</strong> DAG generation takes 2-5 minutes on first run!<br />
-    This test processes 100 nonces through Hashimoto, then filters for difficulty winners.
+  <div class="container">
+    <h1>🔍 Difficulty Filter Diagnostic Test</h1>
+    <p class="subtitle">Validates GPU difficulty filter against CPU reference</p>
+    <div id="log">Initializing diagnostic test...</div>
   </div>
 
-  <div id="log">Initializing...</div>
-
-  <script type="module" src="./test-difficulty-filter.ts"></script>
+  <script type="module" src="./test-difficulty-filter-diagnostic.ts"></script>
 </body>
 </html>

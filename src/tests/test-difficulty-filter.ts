@@ -1,11 +1,18 @@
 /**
- * GPU Difficulty Filter Test
- * Tests the GPU difficulty filter with known mining scenarios
+ * Difficulty Filter Diagnostic Test
+ *
+ * Validates the GPU difficulty filter by:
+ * 1. Generating hashes on GPU
+ * 2. Computing same hashes on CPU
+ * 3. Comparing hash values byte-by-byte
+ * 4. Testing difficulty threshold comparison
+ * 5. Verifying GPU filter returns correct winners
  */
 
-import { runHashimotoBatchGPU, setupHashimotoGPU } from '../gpu/hashimoto';
+import { setupHashimotoGPU, runHashimotoBatchGPU } from '../gpu/hashimoto';
 import { createGPUDevice } from '../gpu/device-helper';
 import { Ethash } from '@ethereumjs/ethash';
+import { keccak256 } from 'ethereum-cryptography/keccak.js';
 
 function log(message: string) {
   const logEl = document.getElementById('log');
@@ -16,75 +23,46 @@ function log(message: string) {
   console.log(message);
 }
 
-async function testDifficultyFilter() {
+async function runDiagnostic() {
   try {
-    log('Initializing WebGPU...\n');
+    log('=== DIFFICULTY FILTER DIAGNOSTIC TEST ===\n');
 
     const device = await createGPUDevice();
     log('✓ GPU device created\n');
 
-    const epoch = 0;
+    // Setup
+    log('Setting up Hashimoto for epoch 0...');
+    const setup = await setupHashimotoGPU(0, device);
+    log(`✓ Setup complete\n`);
 
-    log(`=== GPU Difficulty Filter Test (Epoch ${epoch}) ===\n`);
+    // Create test data
+    const headerBytes = new TextEncoder().encode('diagnostic-test-header');
+    const headerHash = keccak256(headerBytes);
 
-    // Step 1: Setup Hashimoto (generate cache/DAG)
-    log('Step 1: Setting up Hashimoto...');
-    const setup = await setupHashimotoGPU(epoch, device);
-    log('✓ Setup complete\n');
-
-    // Step 2: Generate test nonces
-    log('Step 2: Generating test nonces...');
+    // Generate just 10 nonces for detailed analysis
     const testNonces: Uint8Array[] = [];
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 10; i++) {
       const nonce = new Uint8Array(8);
-      const view = new DataView(nonce.buffer);
-      view.setBigUint64(0, BigInt(i), true);
+      nonce[0] = i;
       testNonces.push(nonce);
     }
-    log(`✓ Created ${testNonces.length} test nonces\n`);
 
-    // Step 3: Create header hash
-    log('Step 3: Creating test header hash...');
-    const headerHash = new Uint8Array(32);
-    log('✓ Header hash created (all zeros)\n');
+    log('Step 1: Running GPU Hashimoto on 10 test nonces...\n');
 
-    // Step 4-5: Run Hashimoto with integrated difficulty filter on all nonces
-    log('Step 4-5: Running Hashimoto on GPU with integrated difficulty filter...');
-
-    // Use a realistic difficulty threshold
-    // For Ethereum, difficulty ~1 Th/s is around 2^256 / (1e12 * 1e9) ≈ 1.8e15
-    // Let's use a threshold that should catch a few winning nonces
-    const difficulty = BigInt('1000000000000'); // 1 trillion (loose threshold for testing)
-    const maxHashThreshold = (BigInt(1) << BigInt(256)) / difficulty;
-
-    const hashimotoStart = performance.now();
-    const batchResult = await runHashimotoBatchGPU(
-      headerHash,
+    // Run without difficulty filter first - get raw hashes
+    const gpuResult = await runHashimotoBatchGPU(
+      new Uint8Array(headerHash.buffer, headerHash.byteOffset, 32),
       testNonces,
       device,
-      setup,
-      undefined, // default config
-      maxHashThreshold // integrated difficulty filter
+      setup
     );
-    const hashimotoTime = performance.now() - hashimotoStart;
 
-    log(`✓ Hashimoto + filter complete in ${hashimotoTime.toFixed(2)}ms`);
-    log(`  Hashimoto hashes: ${batchResult.results.length}`);
+    log(`GPU generated ${gpuResult.results.length} hashes\n`);
 
-    const filterResult = batchResult.filterResult!;
-    log(`  Hashimoto time: ${batchResult.timeMs.toFixed(2)}ms`);
-    log(`  Filter time: ${filterResult.filterTimeMs.toFixed(2)}ms`);
-    log(`  Input hashes: ${filterResult.totalHashes}`);
-    log(`  Winning nonces: ${filterResult.validCount}`);
-    log(`  Efficiency: ${((filterResult.validCount / filterResult.totalHashes) * 100).toFixed(2)}% pass rate\n`);
-
-    // Step 6: Validate results
-    log('Step 6: Validating filter results...\n');
+    // Step 2: Compute same hashes on CPU
+    log('Step 2: Computing same hashes on CPU reference...\n');
 
     const ethash = new Ethash();
-    const { keccak512 } = await import('ethereum-cryptography/keccak.js');
-
-    // Setup cache for validation
     const cacheArray: Uint8Array[] = [];
     for (let i = 0; i < setup.cache.length; i += 16) {
       const itemU32 = setup.cache.slice(i, i + 16);
@@ -94,58 +72,143 @@ async function testDifficultyFilter() {
     ethash.cache = cacheArray;
     ethash.fullSize = setup.dag.length * 4;
 
-    // Verify each winning nonce is indeed valid
-    log('Checking winning nonces meet difficulty threshold:\n');
-    let allValid = true;
+    // Step 3: Compare GPU and CPU hashes
+    log('Step 3: Comparing GPU vs CPU hash values...\n');
 
-    for (let i = 0; i < Math.min(5, filterResult.validNonces.length); i++) {
-      const nonce = filterResult.validNonces[i];
-      const cpuResult = ethash.run(headerHash, nonce, ethash.fullSize);
+    let hashesMatch = 0;
+    let hashesMismatch = 0;
 
-      // Check if meets difficulty
-      const hashBigInt = BigInt(
-        '0x' + Array.from(cpuResult.hash)
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('')
+    for (let i = 0; i < testNonces.length; i++) {
+      const gpuHash = gpuResult.results[i].hash;
+      const cpuResult = ethash.run(
+        new Uint8Array(headerHash.buffer, headerHash.byteOffset, 32),
+        testNonces[i],
+        ethash.fullSize
       );
-      const meetsDifficulty = hashBigInt < (BigInt(1) << BigInt(256)) / difficulty;
+      const cpuHash = cpuResult.hash;
 
-      const status = meetsDifficulty ? '✓' : '✗';
-      log(`  ${status} Nonce ${i}: hash starts with ${Array.from(cpuResult.hash.slice(0, 4))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')}... meets: ${meetsDifficulty}`);
+      const gpuHex = Array.from(gpuHash).map(b => b.toString(16).padStart(2, '0')).join('');
+      const cpuHex = Array.from(cpuHash).map(b => b.toString(16).padStart(2, '0')).join('');
 
-      if (!meetsDifficulty) {
-        allValid = false;
+      const match = gpuHex === cpuHex;
+      const status = match ? '✓' : '✗';
+
+      log(`Nonce ${i}:`);
+      log(`  GPU: 0x${gpuHex}`);
+      log(`  CPU: 0x${cpuHex}`);
+      log(`  ${status}\n`);
+
+      if (match) hashesMatch++;
+      else hashesMismatch++;
+    }
+
+    log(`Hash comparison: ${hashesMatch}/${testNonces.length} match\n`);
+
+    if (hashesMismatch > 0) {
+      log('❌ WARNING: Some GPU hashes don\'t match CPU. This is a bug!\n');
+    } else {
+      log('✓ All GPU hashes match CPU reference!\n');
+    }
+
+    // Step 4: Test difficulty threshold comparison
+    log('Step 4: Testing difficulty threshold comparison...\n');
+
+    const thresholds = [
+      { name: '2^255 (top 50%)', value: BigInt(1) << BigInt(255) },
+      { name: '2^240 (top 0.0015%)', value: BigInt(1) << BigInt(240) },
+      { name: '2^200 (realistic Eth)', value: BigInt(1) << BigInt(200) },
+    ];
+
+    for (const threshold of thresholds) {
+      log(`Testing threshold: ${threshold.name}`);
+
+      // Count how many GPU hashes should pass this threshold
+      let cpuPassCount = 0;
+      for (let i = 0; i < testNonces.length; i++) {
+        const gpuHash = gpuResult.results[i].hash;
+        // Convert hash to BigInt (little-endian)
+        const hashView = new DataView(gpuHash.buffer, gpuHash.byteOffset, 32);
+        const hashU32s = new Array(8);
+        for (let j = 0; j < 8; j++) {
+          hashU32s[j] = hashView.getUint32(j * 4, true);
+        }
+        // Compare as little-endian u256
+        let hashBigInt = BigInt(0);
+        for (let j = 7; j >= 0; j--) {
+          hashBigInt = (hashBigInt << BigInt(32)) | BigInt(hashU32s[j]);
+        }
+
+        if (hashBigInt < threshold.value) {
+          cpuPassCount++;
+          log(`  Nonce ${i} PASSES (hash < threshold)`);
+        }
+      }
+
+      log(`  Result: ${cpuPassCount}/${testNonces.length} hashes pass\n`);
+    }
+
+    // Step 5: Run with difficulty filter and verify
+    log('Step 5: Running GPU Hashimoto WITH integrated difficulty filter...\n');
+
+    const filterThreshold = BigInt(1) << BigInt(200); // Realistic Ethereum threshold
+
+    const filteredResult = await runHashimotoBatchGPU(
+      new Uint8Array(headerHash.buffer, headerHash.byteOffset, 32),
+      testNonces,
+      device,
+      setup,
+      undefined,
+      filterThreshold
+    );
+
+    log(`GPU filter returned: ${filteredResult.filterResult?.validCount || 0} winning nonces\n`);
+
+    // Manually verify which nonces should have been returned
+    log('Step 6: Manual verification of filter results...\n');
+
+    let expectedWinners = 0;
+    for (let i = 0; i < testNonces.length; i++) {
+      const gpuHash = gpuResult.results[i].hash;
+      const hashView = new DataView(gpuHash.buffer, gpuHash.byteOffset, 32);
+      const hashU32s = new Array(8);
+      for (let j = 0; j < 8; j++) {
+        hashU32s[j] = hashView.getUint32(j * 4, true);
+      }
+      let hashBigInt = BigInt(0);
+      for (let j = 7; j >= 0; j--) {
+        hashBigInt = (hashBigInt << BigInt(32)) | BigInt(hashU32s[j]);
+      }
+
+      if (hashBigInt < filterThreshold) {
+        expectedWinners++;
+        const nonceHex = Array.from(testNonces[i]).map(b => b.toString(16).padStart(2, '0')).join('');
+        log(`  Expected winner: nonce 0x${nonceHex}`);
       }
     }
 
-    log('');
-    if (allValid) {
-      log('✓✓✓ ALL WINNING NONCES VALIDATED!');
-    } else {
-      log('⚠️  Some nonces did not meet difficulty threshold');
-    }
+    log(`\nExpected winners: ${expectedWinners}`);
+    log(`GPU filter returned: ${filteredResult.filterResult?.validCount || 0}`);
 
-    log('\n=== Performance Summary ===');
-    log(`Total hashes processed: ${filterResult.totalHashes}`);
-    log(`Winning nonces found: ${filterResult.validCount}`);
-    log(`Win rate: ${((filterResult.validCount / filterResult.totalHashes) * 100).toFixed(2)}%`);
-    log(`Filter time: ${filterResult.timeMs.toFixed(2)}ms`);
-    log(`Throughput: ${(filterResult.totalHashes / (filterResult.timeMs / 1000)).toFixed(0)} hashes/sec`);
+    if (expectedWinners === (filteredResult.filterResult?.validCount || 0)) {
+      log('✓ Filter count matches expected!\n');
+    } else {
+      log('❌ Filter count mismatch!\n');
+    }
 
     // Cleanup
     setup.cacheBuffer.destroy();
     setup.dagBuffer.destroy();
+
+    log('\n=== DIAGNOSTIC COMPLETE ===');
   } catch (error) {
     log(`❌ Error: ${error instanceof Error ? error.message : String(error)}`);
     console.error(error);
   }
 }
 
-// Start when DOM is ready
+// Run when DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', testDifficultyFilter);
+  document.addEventListener('DOMContentLoaded', runDiagnostic);
 } else {
-  testDifficultyFilter();
+  runDiagnostic();
 }
