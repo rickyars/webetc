@@ -17,10 +17,16 @@ export async function createGPUDevice(): Promise<GPUDevice> {
     maxStorageBufferBindingSize: `${(adapter.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
   });
 
-  // Request device without specifying limits - let browser choose optimal defaults
+  // Request device with the adapter's reported limits
+  // This ensures we get the full capabilities the hardware supports
   try {
-    console.log('[GPU] Requesting device with default limits...');
-    const device = await adapter.requestDevice();
+    console.log('[GPU] Requesting device with adapter limits...');
+    const device = await adapter.requestDevice({
+      requiredLimits: {
+        maxBufferSize: adapter.limits.maxBufferSize,
+        maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+      },
+    });
     console.log(`[GPU] ✓ Device created successfully with limits:`, {
       maxBufferSize: `${(device.limits.maxBufferSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
       maxStorageBufferBindingSize: `${(device.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
