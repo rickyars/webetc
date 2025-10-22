@@ -26,6 +26,7 @@ This project demonstrates GPU-accelerated Ethereum mining computations entirely 
 - **Step 8:** Full mining pipeline on GPU with large batch processing
 
 ### Test Files
+- **GPU Hashimoto Verification:** `src/tests/test-hashimoto-verification.html` - Verifies GPU matches ethereumjs with nonce byte reversal
 - **GPU Keccak Test:** `src/test-keccak.html` - 5/5 tests passing
 - **Main UI:** `src/index.html` - UI for running all steps
 

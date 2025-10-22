@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Hashimoto GPU Verification</title>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font-family: monospace;
+        padding: 20px;
+        background: #1e1e1e;
+        color: #d4d4d4;
+      }
+      h1 {
+        color: #4fc3f7;
+        border-bottom: 2px solid #4fc3f7;
+        padding-bottom: 10px;
+      }
+      #log {
+        background: #252526;
+        border: 1px solid #464647;
+        border-radius: 4px;
+        padding: 15px;
+        font-size: 12px;
+        max-height: 800px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        min-height: 400px;
+        font-family: 'Courier New', monospace;
+      }
+      .match {
+        color: #4ec9b0;
+      }
+      .mismatch {
+        color: #f48771;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GPU Hashimoto Verification Test</h1>
+    <p>Verifies GPU output matches ethereumjs with nonce byte reversal</p>
+
+    <div id="log"></div>
+
+    <script type="module">
+      import { setupHashimotoGPU, runHashimotoBatchGPU } from '../gpu/hashimoto.js';
+      import { createGPUDevice } from '../gpu/device-helper.js';
+      import { keccak256 } from 'ethereum-cryptography/keccak.js';
+
+      const logEl = document.getElementById('log');
+
+      function log(msg) {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg);
+      }
+
+      function bytesToHex(bytes) {
+        return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      async function run() {
+        try {
+          log('=== GPU HASHIMOTO VERIFICATION ===\n');
+
+          const device = await createGPUDevice();
+
+          // Test header
+          const testHeader = new TextEncoder().encode('test-block-header');
+          const headerHash = keccak256(testHeader);
+          const headerHashBytes = new Uint8Array(headerHash.buffer, headerHash.byteOffset, 32);
+
+          log('Test setup:');
+          log(`  Header: "test-block-header"`);
+          log(`  Header hash: ${bytesToHex(headerHash).substring(0, 32)}...`);
+          log('');
+
+          // Test vectors
+          const testVectors = [
+            { nonce: '0000000000000000', ethereumjsHash: 'edbeac796215d139c0080c3808e6232a71ebdc0de67421f0d47d24dc0931a2b2' },
+            { nonce: '0100000000000000', ethereumjsHash: '1a5b48baa0eabe72c9550a097e26b6d2bc5e7ca6a8cceee748f6b197b4a23215' },
+            { nonce: '0200000000000000', ethereumjsHash: '3e7fbb8a503cf5c9ff4ed8cfd47de1874eb6f4abb8cd833e8f78190fee0b06ec' },
+          ];
+
+          log('Setting up Hashimoto for epoch 0...');
+          const setup = await setupHashimotoGPU(0, device);
+          log('✓ Setup complete\n');
+
+          // Convert test nonces
+          const nonces = [];
+          for (const vec of testVectors) {
+            const nonceBytes = new Uint8Array(8);
+            for (let i = 0; i < 8; i++) {
+              nonceBytes[i] = parseInt(vec.nonce.substring(i * 2, i * 2 + 2), 16);
+            }
+            nonces.push(nonceBytes);
+          }
+
+          log('Running GPU Hashimoto...');
+          const result = await runHashimotoBatchGPU(headerHashBytes, nonces, device, setup);
+          log('✓ GPU computation complete\n');
+
+          log('Results:');
+          log('');
+
+          let matches = 0;
+          for (let i = 0; i < result.results.length; i++) {
+            const gpuHash = bytesToHex(result.results[i].hash);
+            const expected = testVectors[i].ethereumjsHash;
+            const isMatch = gpuHash === expected;
+
+            log(`Nonce ${testVectors[i].nonce}:`);
+            const className = isMatch ? 'match' : 'mismatch';
+            log(`  GPU:      ${gpuHash}`);
+            log(`  Expected: ${expected}`);
+            log(`  <span class="${className}">${isMatch ? '✓ MATCH' : '✗ MISMATCH'}</span>`);
+            log('');
+
+            if (isMatch) matches++;
+          }
+
+          log(`\nFinal Result: ${matches}/${testVectors.length} matches`);
+          log('');
+
+          if (matches === testVectors.length) {
+            log('🎉 SUCCESS! GPU Hashimoto matches ethereumjs!');
+            log('Nonce byte reversal fix is working correctly.');
+          } else {
+            log('❌ FAILURE! GPU is NOT matching ethereumjs.');
+            log('Issue: GPU still not implementing nonce reversal correctly.');
+          }
+
+          // Cleanup
+          setup.cacheBuffer.destroy();
+          setup.dagBuffer.destroy();
+
+        } catch (err) {
+          log(`ERROR: ${err.message}`);
+          console.error(err);
+        }
+      }
+
+      run();
+    </script>
+  </body>
+</html>
