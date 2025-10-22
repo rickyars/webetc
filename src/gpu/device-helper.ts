@@ -11,44 +11,23 @@ export async function createGPUDevice(): Promise<GPUDevice> {
     throw new Error('WebGPU not available');
   }
 
-  // Request generous limits for large buffers
-  // Note: WebGPU spec limits maxStorageBufferBindingSize to 2^31 - 4 bytes (2147483644)
-  // Even though hardware can handle more, the spec enforces this ceiling
-  const limitOptions = [
-    {
-      maxBufferSize: 6442450944, // 6GB - ideal for current Ethereum DAG
-      maxStorageBufferBindingSize: 2147483644, // 2GB - 4 bytes (WebGPU spec limit)
-    },
-    {
-      maxBufferSize: 4294967296, // 4GB - fallback
-      maxStorageBufferBindingSize: 1073741824, // 1GB for shader storage
-    },
-    {
-      maxBufferSize: 2147483644, // 2GB - conservative
-      maxStorageBufferBindingSize: 1073741824, // 1GB for shader storage
-    },
-  ];
+  // Get adapter limits to see what's available
+  console.log('[GPU] Adapter limits:', {
+    maxBufferSize: `${(adapter.limits.maxBufferSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
+    maxStorageBufferBindingSize: `${(adapter.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
+  });
 
-  let lastError: Error | null = null;
-
-  for (const limits of limitOptions) {
-    try {
-      console.log(
-        `[GPU] Requesting device with maxBufferSize=${(limits.maxBufferSize / 1024 / 1024 / 1024).toFixed(1)}GB...`
-      );
-      const device = await adapter.requestDevice({ requiredLimits: limits });
-      console.log(`[GPU] ✓ Device created successfully with limits:`, {
-        maxBufferSize: `${(device.limits.maxBufferSize / 1024 / 1024 / 1024).toFixed(1)}GB`,
-        maxStorageBufferBindingSize: `${(device.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(1)}GB`,
-      });
-      return device;
-    } catch (e) {
-      lastError = e as Error;
-      console.log(`[GPU] ✗ Failed with ${(limits.maxBufferSize / 1024 / 1024 / 1024).toFixed(1)}GB limit: ${lastError.message}`);
-    }
+  // Request device without specifying limits - let browser choose optimal defaults
+  try {
+    console.log('[GPU] Requesting device with default limits...');
+    const device = await adapter.requestDevice();
+    console.log(`[GPU] ✓ Device created successfully with limits:`, {
+      maxBufferSize: `${(device.limits.maxBufferSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
+      maxStorageBufferBindingSize: `${(device.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
+    });
+    return device;
+  } catch (e) {
+    console.error('[GPU] Failed to create device:', e);
+    throw new Error(`Failed to create GPU device: ${(e as Error).message}`);
   }
-
-  throw new Error(
-    `Failed to create GPU device with any limit configuration. Last error: ${lastError?.message}`
-  );
 }
