@@ -59,12 +59,11 @@ async function testFullPipeline() {
 
     log(`Generating ${testNonces.length} nonces...\n`);
 
-    // Use difficulty that will catch a few winners (loose threshold for testing)
-    // difficulty = 1 trillion: expect ~1 winner per trillion hashes
-    // max_hash = 2^256 / difficulty
-    // For testing with 1000 hashes, we need a loose difficulty
-    const difficulty = BigInt('1000000000000'); // 1 trillion (loose for testing 1000 hashes)
-    const maxHashThreshold = (BigInt(1) << BigInt(256)) / difficulty;
+    // For testing, we need to set a difficulty that will actually produce winners with 1000 hashes
+    // Real Ethereum uses huge difficulties, but for testing we use loose thresholds
+    // We'll use a threshold that allows ~10-20% of hashes to pass (realistic PoW rate)
+    // Target: max_hash = 2^255 (top 50% of hash space) to ensure some winners
+    const maxHashThreshold = BigInt(1) << BigInt(255);
 
     // Step 3a: Hashimoto kernel with integrated difficulty filter
     log('3a. Running Hashimoto kernel on GPU with difficulty filter...');
@@ -112,16 +111,34 @@ async function testFullPipeline() {
     ethash.fullSize = setup.dag.length * 4;
 
     // Verify each winning nonce
-    log(`Validating ${Math.min(10, filterResult.validNonces.length)} winners...\n`);
+    log(`Validating winners against CPU reference...\n`);
 
     let allValid = true;
     let validationErrors = 0;
 
-    for (let i = 0; i < Math.min(10, filterResult.validNonces.length); i++) {
-      const nonce = filterResult.validNonces[i];
-      const cpuResult = ethash.run(headerHash, nonce, ethash.fullSize);
+    if (filterResult.validNonces.length === 0) {
+      log('⚠️  No winners found with current difficulty threshold');
+      log(`    Threshold: 2^255 (top 50% of hash space)`);
+      log(`    This likely means the hashes haven't been compared correctly in the filter.\n`);
+      log(`    Checking a few hashes manually to diagnose:\n`);
 
-      // Verify hash correctness
+      // Show first few hashes to diagnose
+      for (let i = 0; i < Math.min(5, batchResult.results.length); i++) {
+        const hash = batchResult.results[i].hash;
+        const hashHex = Array.from(hash).map(b => b.toString(16).padStart(2, '0')).join('');
+        const hashBigInt = BigInt('0x' + hashHex);
+        const passes = hashBigInt < maxHashThreshold;
+        log(`  Hash ${i}: 0x${hashHex.substring(0, 16)}...`);
+        log(`    Passes threshold: ${passes ? 'YES ✓' : 'NO ✗'}`);
+      }
+    } else {
+      log(`Found ${filterResult.validNonces.length} winning nonces!\n`);
+
+      for (let i = 0; i < Math.min(10, filterResult.validNonces.length); i++) {
+        const nonce = filterResult.validNonces[i];
+        const cpuResult = ethash.run(headerHash, nonce, ethash.fullSize);
+
+        // Verify hash correctness
       const hashBytes = batchResult.results.find(r =>
         Array.from(r.nonce).every((b, j) => b === nonce[j])
       )?.hash;
@@ -158,11 +175,11 @@ async function testFullPipeline() {
     // Final summary
     log('=== PIPELINE SUMMARY ===\n');
     log(`Setup time:        ${(setupTime / 1000).toFixed(2)}s`);
-    log(`Hashimoto time:    ${hashimotoTime.toFixed(2)}ms for ${testNonces.length} nonces`);
-    log(`Filter time:       ${filterTime.toFixed(2)}ms`);
-    log(`Total mining time: ${(hashimotoTime + filterTime).toFixed(2)}ms\n`);
+    log(`Hashimoto time:    ${batchResult.timeMs.toFixed(2)}ms for ${testNonces.length} nonces`);
+    log(`Filter time:       ${filterResult.filterTimeMs.toFixed(2)}ms`);
+    log(`Total mining time: ${(batchResult.timeMs + filterResult.filterTimeMs).toFixed(2)}ms\n`);
 
-    log(`Hashes/sec:        ${(testNonces.length / (hashimotoTime / 1000)).toFixed(0)}`);
+    log(`Hashes/sec:        ${(testNonces.length / (batchResult.timeMs / 1000)).toFixed(0)}`);
     log(`Winners found:     ${filterResult.validCount}/${testNonces.length}`);
     log(`Win rate:          ${((filterResult.validCount / testNonces.length) * 100).toFixed(6)}%\n`);
 
