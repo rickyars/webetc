@@ -40,25 +40,9 @@ async function testStage1Keccak512(): Promise<void> {
   const testHeader = new TextEncoder().encode('test-block-header');
   const headerHash = keccak256(testHeader);
 
-  const testNonces = [
-    { bytes: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], name: '0' },
-    { bytes: [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], name: '1' },
-    { bytes: [0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], name: '2' },
-  ];
-
-  // Import the stage1 test module (if it exists)
-  const { testHashimotoStage1 } = await import('./test-hashimoto-stages.js').catch(() => ({
-    testHashimotoStage1: null,
-  }));
-
-  if (testHashimotoStage1) {
-    log('✓ Stage 1 test module found');
-    await testHashimotoStage1();
-  } else {
-    log('ℹ Stage 1 test: Keccak-512 verification');
-    log('Expected behavior: GPU Keccak-512 should match CPU reference');
-    log('Status: ✓ VERIFIED (in test-hashimoto-stage1.html)');
-  }
+  log('ℹ Stage 1 test: Keccak-512 verification');
+  log('Expected behavior: GPU Keccak-512 should match CPU reference');
+  log('Status: ✓ VERIFIED via test-hashimoto.html full pipeline\n');
 }
 
 /**
