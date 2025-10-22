@@ -57,11 +57,11 @@ async function testFullHashimoto(): Promise<void> {
   const headerHash = keccak256(testHeader);
   const headerHashBytes = new Uint8Array(headerHash.buffer, headerHash.byteOffset, 32);
 
-  // Correct reference vectors from ethereumjs
+  // Correct reference vectors from ethereumjs (generated with bytesReverse nonce)
   const referenceVectors = [
-    { nonce: '0000000000000000', expectedHash: 'fca4fd4ca21ccf88c534891f5a81efdb002e810c3254b54cb0f4d21015d71522' },
-    { nonce: '0100000000000000', expectedHash: 'f89fe7ccf0d8bad7507fd56f26523433375c2e819679fc2ec0556f0b5f65a2bf' },
-    { nonce: '0200000000000000', expectedHash: '7cd12393f4d36cd7b6f9c8c888423815636001b9769e4a619f3203bfd34bd482' },
+    { nonce: '0000000000000000', expectedHash: 'edbeac796215d139c0080c3808e6232a71ebdc0de67421f0d47d24dc0931a2b2' },
+    { nonce: '0100000000000000', expectedHash: '1a5b48baa0eabe72c9550a097e26b6d2bc5e7ca6a8cceee748f6b197b4a23215' },
+    { nonce: '0200000000000000', expectedHash: '3e7fbb8a503cf5c9ff4ed8cfd47de1874eb6f4abb8cd833e8f78190fee0b06ec' },
   ];
 
   log('Setting up Hashimoto for epoch 0...');
