@@ -85,15 +85,19 @@ export async function runDifficultyFilterGPU(
   new Uint32Array(validCountBuffer.getMappedRange()).set([0]);
   validCountBuffer.unmap();
 
-  // Parameters buffer - expand to hold full 256-bit threshold
+  // Parameters buffer - struct with proper alignment
+  // Layout: num_hashes (u32) + unused (u32) + threshold array (8 x u32)
+  // Total: 40 bytes (2 + 8 u32s, aligned to 16 bytes)
   const paramsBuffer = device.createBuffer({
-    size: 40, // num_hashes (u32) + unused (u32) + 8 u32s for full 256-bit threshold
+    size: 40,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     mappedAtCreation: true,
   });
   const paramsData = new Uint32Array(paramsBuffer.getMappedRange());
-  paramsData[0] = numHashes;
-  paramsData[1] = 0; // unused
+
+  // Struct members:
+  paramsData[0] = numHashes;      // num_hashes
+  paramsData[1] = 0;               // unused
 
   // Convert difficulty to max_hash threshold (full 256-bit value)
   // The difficulty parameter is a 256-bit BigInt (e.g., 2^255)

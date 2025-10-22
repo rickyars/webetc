@@ -20,11 +20,17 @@ struct PooledNonce {
   nonce_hi: u32,
 };
 
+struct Params {
+  num_hashes: u32,
+  unused: u32,
+  threshold: array<u32, 8>,
+};
+
 @group(0) @binding(0) var<storage, read> hashes: array<u32>;              // All hashes (8 u32 per hash)
 @group(0) @binding(1) var<storage, read> nonces: array<u32>;              // All nonces (2 u32 per nonce)
 @group(0) @binding(2) var<storage, read_write> valid_nonces: array<PooledNonce>; // Output: winning nonces
 @group(0) @binding(3) var<storage, read_write> valid_count: atomic<u32>;  // Counter for valid nonces
-@group(0) @binding(4) var<uniform> params: array<u32, 10>;               // x=num_hashes, y=unused, [2..9]=full 256-bit max_hash threshold
+@group(0) @binding(4) var<uniform> params: Params;                         // Parameters with proper alignment
 
 // Compare two 256-bit numbers represented as arrays of 8 u32s (little-endian)
 // Returns true if a < b
@@ -44,7 +50,7 @@ fn u256_less_than(a: array<u32, 8>, b: array<u32, 8>) -> bool {
 @compute @workgroup_size(32)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let hash_idx = global_id.x;
-  let num_hashes = params[0];
+  let num_hashes = params.num_hashes;
 
   if (hash_idx >= num_hashes) {
     return;
@@ -57,13 +63,10 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     hash[i] = hashes[hash_offset + i];
   }
 
-  // Read the max_hash threshold from params (full 256-bit value)
-  // params[0] = num_hashes
-  // params[1] = unused
-  // params[2..9] = 8 u32s representing the full 256-bit threshold
+  // Read the max_hash threshold from params struct
   var max_hash: array<u32, 8>;
   for (var i = 0u; i < 8u; i = i + 1u) {
-    max_hash[i] = params[2u + i];
+    max_hash[i] = params.threshold[i];
   }
 
   // Check if hash < max_hash (meets difficulty threshold)
