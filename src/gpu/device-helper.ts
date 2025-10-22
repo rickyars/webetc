@@ -17,15 +17,14 @@ export async function createGPUDevice(): Promise<GPUDevice> {
     maxStorageBufferBindingSize: `${(adapter.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
   });
 
-  // Request higher limits for large DAG allocation (6GB)
-  // Must request these explicitly via requiredLimits parameter
+  // Request device with adapter's actual supported limits
+  // Don't try to exceed what the adapter supports
   try {
-    console.log('[GPU] Requesting device with 6GB limits...');
-    const sixGbBytes = 6 * 1024 * 1024 * 1024;
+    console.log('[GPU] Creating device with adapter supported limits...');
     const device = await adapter.requestDevice({
       requiredLimits: {
-        maxBufferSize: sixGbBytes,
-        maxStorageBufferBindingSize: sixGbBytes,
+        maxBufferSize: adapter.limits.maxBufferSize,
+        maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
       },
     });
 
