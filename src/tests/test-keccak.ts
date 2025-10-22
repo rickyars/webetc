@@ -5,8 +5,8 @@
  */
 
 // Import the shader code
-import keccak512Shader from './compute/keccak-512-shader.wgsl?raw';
-import keccak256Shader from './compute/keccak-256-shader.wgsl?raw';
+import keccak512Shader from '../compute/keccak-512-shader.wgsl?raw';
+import keccak256Shader from '../compute/keccak-256-shader.wgsl?raw';
 import { createGPUDevice } from '../gpu/device-helper';
 
 interface TestVector {
