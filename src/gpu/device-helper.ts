@@ -17,15 +17,17 @@ export async function createGPUDevice(): Promise<GPUDevice> {
     maxStorageBufferBindingSize: `${(adapter.limits.maxStorageBufferBindingSize / 1024 / 1024 / 1024).toFixed(2)}GB`,
   });
 
-  // Try to request higher limits - modern GPUs support much more than baseline
-  // We try progressively larger limits until one succeeds
+  // Request limits for Ethereum DAG storage
+  // WebGPU spec hard limit for maxBufferSize is 2^31 (2147483648 = 2GB)
+  // Epoch 0 DAG is ~1GB, so 2GB limit is sufficient
+  // We try progressively smaller limits until one succeeds
   const limitOptions = [
     {
-      maxBufferSize: 6442450944, // 6GB
+      maxBufferSize: 2147483648, // 2GB (WebGPU spec maximum for maxBufferSize)
       maxStorageBufferBindingSize: 2147483644, // 2GB - 4 bytes (spec limit)
     },
     {
-      maxBufferSize: 4294967296, // 4GB
+      maxBufferSize: 1610612736, // 1.5GB
       maxStorageBufferBindingSize: 1073741824, // 1GB
     },
     {
