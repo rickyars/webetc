@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Stage 1 Keccak-512 Test</title>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font-family: monospace;
+        padding: 20px;
+        background: #1e1e1e;
+        color: #d4d4d4;
+      }
+      h1 {
+        color: #4fc3f7;
+      }
+      #log {
+        background: #252526;
+        border: 1px solid #464647;
+        padding: 15px;
+        font-size: 12px;
+        max-height: 800px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        font-family: 'Courier New', monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Stage 1: Keccak-512 Nonce Reversal Test</h1>
+    <p>Tests if GPU is applying nonce byte reversal before Keccak-512</p>
+    <div id="log"></div>
+
+    <script type="module">
+      import { keccak256, keccak512 } from 'ethereum-cryptography/keccak.js';
+
+      const logEl = document.getElementById('log');
+
+      function log(msg) {
+        logEl.textContent += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg);
+      }
+
+      function bytesToHex(bytes) {
+        return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      // Test header
+      const testHeader = new TextEncoder().encode('test-block-header');
+      const headerHash = keccak256(testHeader);
+      const nonce = new Uint8Array([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+      log('=== STAGE 1: KECCAK-512 NONCE REVERSAL TEST ===\n');
+      log('Test inputs:');
+      log(`  Header hash: ${bytesToHex(headerHash).substring(0, 32)}...`);
+      log(`  Nonce: ${bytesToHex(nonce)}\n`);
+
+      // Method 1: WITHOUT nonce reversal (old GPU bug)
+      const input_no_rev = new Uint8Array(40);
+      input_no_rev.set(headerHash, 0);
+      input_no_rev.set(nonce, 32);
+      const s_no_rev = keccak512(input_no_rev);
+      const hash_no_rev = bytesToHex(s_no_rev);
+      const s0_no_rev = new DataView(s_no_rev.buffer, s_no_rev.byteOffset).getUint32(0, true);
+
+      log('WITHOUT nonce reversal (old GPU bug):');
+      log(`  Keccak input: [header || nonce]`);
+      log(`  s[0] = 0x${s0_no_rev.toString(16).padStart(8, '0')}`);
+      log(`  Full hash: ${hash_no_rev.substring(0, 32)}...\n`);
+
+      // Method 2: WITH nonce reversal (correct ethereumjs)
+      const reversed = new Uint8Array(8);
+      for (let i = 0; i < 8; i++) {
+        reversed[i] = nonce[7 - i];
+      }
+      const input_rev = new Uint8Array(40);
+      input_rev.set(headerHash, 0);
+      input_rev.set(reversed, 32);
+      const s_rev = keccak512(input_rev);
+      const hash_rev = bytesToHex(s_rev);
+      const s0_rev = new DataView(s_rev.buffer, s_rev.byteOffset).getUint32(0, true);
+
+      log('WITH nonce reversal (correct ethereumjs):');
+      log(`  Nonce reversed: ${bytesToHex(reversed)}`);
+      log(`  Keccak input: [header || reversed_nonce]`);
+      log(`  s[0] = 0x${s0_rev.toString(16).padStart(8, '0')}`);
+      log(`  Full hash: ${hash_rev.substring(0, 32)}...\n`);
+
+      log('Comparison:');
+      log(`  Without reversal: s[0]=0x${s0_no_rev.toString(16).padStart(8, '0')}`);
+      log(`  With reversal:    s[0]=0x${s0_rev.toString(16).padStart(8, '0')}`);
+      log('');
+
+      if (hash_no_rev === hash_rev) {
+        log('⚠️  Both produce SAME hash (nonce is all-zeros, so reversal has no effect)');
+      } else {
+        log('✓ Different hashes (reversal matters)');
+      }
+
+      log('\nKey question: What does the GPU produce?');
+      log('- If GPU produces: 0x' + s0_no_rev.toString(16).padStart(8, '0') + ' → GPU is NOT reversing (bug!)');
+      log('- If GPU produces: 0x' + s0_rev.toString(16).padStart(8, '0') + ' → GPU IS reversing (good!)');
+      log('');
+      log('Since nonce is all-zeros, reversal has no effect on s[0].');
+      log('We need a non-zero nonce to see the difference.\n');
+
+      // Now test with non-zero nonce
+      const nonce2 = new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+
+      log('=== TEST 2: Non-zero nonce ===\n');
+      log(`Nonce: ${bytesToHex(nonce2)}\n`);
+
+      // Without reversal
+      const input2_no_rev = new Uint8Array(40);
+      input2_no_rev.set(headerHash, 0);
+      input2_no_rev.set(nonce2, 32);
+      const s2_no_rev = keccak512(input2_no_rev);
+      const s20_no_rev = new DataView(s2_no_rev.buffer, s2_no_rev.byteOffset).getUint32(0, true);
+      const hash2_no_rev = bytesToHex(s2_no_rev);
+
+      // With reversal
+      const reversed2 = new Uint8Array(8);
+      for (let i = 0; i < 8; i++) {
+        reversed2[i] = nonce2[7 - i];
+      }
+      const input2_rev = new Uint8Array(40);
+      input2_rev.set(headerHash, 0);
+      input2_rev.set(reversed2, 32);
+      const s2_rev = keccak512(input2_rev);
+      const s20_rev = new DataView(s2_rev.buffer, s2_rev.byteOffset).getUint32(0, true);
+      const hash2_rev = bytesToHex(s2_rev);
+
+      log('WITHOUT reversal:');
+      log(`  s[0] = 0x${s20_no_rev.toString(16).padStart(8, '0')}`);
+      log(`  Hash: ${hash2_no_rev.substring(0, 32)}...\n`);
+
+      log('WITH reversal:');
+      log(`  Reversed nonce: ${bytesToHex(reversed2)}`);
+      log(`  s[0] = 0x${s20_rev.toString(16).padStart(8, '0')}`);
+      log(`  Hash: ${hash2_rev.substring(0, 32)}...\n`);
+
+      log('Comparison:');
+      log(`  Without: 0x${s20_no_rev.toString(16).padStart(8, '0')}`);
+      log(`  With:    0x${s20_rev.toString(16).padStart(8, '0')}`);
+      log('');
+
+      if (hash2_no_rev !== hash2_rev) {
+        log('✓ These are DIFFERENT - reversal definitely matters for non-zero nonce');
+      }
+
+      log('\nExpectation:');
+      log('GPU should produce: 0x' + s20_rev.toString(16).padStart(8, '0'));
+      log('If GPU produces: 0x' + s20_no_rev.toString(16).padStart(8, '0') + ' → reversal not working!');
+    </script>
+  </body>
+</html>
