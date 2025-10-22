@@ -35,67 +35,80 @@ This effort aligns with the latest WebGPU API features and browser support, emph
 - Benchmark: GPU vs CPU performance for hashing throughput.
 
 
-#### Step 4 — Cache Generation on GPU
+#### Step 4 — Cache Generation (CPU → GPU Memory)
 
-- Implement GPU compute shader to generate Ethash cache items using Keccak-512.
-- Generate cache directly on GPU using the shader from Step 3.
-- Copy results back to CPU for storage and validation.
-- **Cache storage:** Save to IndexedDB or localStorage in binary format for fast reloading.
-- Verify cache integrity and size before proceeding.
-
-
-#### Step 5 — DAG Generation on GPU
-
-- Implement GPU compute shader for DAG item calculation.
-- Load cache buffer onto GPU from storage (or regenerate if needed).
-- Execute GPU kernel to generate full DAG (all items in parallel).
-- Copy DAG results back to CPU for storage.
-- **DAG storage:** Save to IndexedDB with metadata (epoch, hash, timestamp).
-- Implement DAG loading from storage to avoid expensive regeneration.
+- Use @ethereumjs/ethash to generate cache on CPU (one-time per epoch, ~30 seconds)
+- **Validation:** Compare with reference implementation (already built-in)
+- **GPU Memory Transfer:** Upload cache to GPU buffer (keep resident)
+- **Validation on GPU:** Verify cache copied correctly to GPU (sample items)
+- No GPU computation needed; CPU generation acceptable for one-time setup
 
 
-#### Step 6 — DAG Validation and Testing
+#### Step 5 — DAG Generation (CPU → GPU Memory)
 
-- Create tests comparing DAG values generated on GPU against official Ethash test vectors.
-- Sample specific DAG indices and verify against reference implementations (ethminer, go-ethereum).
-- Verify cache consistency by recomputing and comparing selective cache items.
-- Implement unit tests for DAG/cache GPU kernels with small subsets.
-
-
-#### Step 7 — Hashimoto GPU Shader
-
-- Implement GPU compute shader for Hashimoto algorithm.
-- Load DAG buffer onto GPU (or use streaming for large DAGs).
-- Implement FNV-1a mixing in WGSL.
-- Chain with Keccak-512 shader for final hash computation.
-- Test with known mining nonces and expected hash outputs.
+- Use @ethereumjs/ethash to generate DAG on CPU (one-time per epoch, ~2-3 minutes)
+- **Validation:** Compare with reference implementation (already built-in)
+- **GPU Memory Transfer:** Upload DAG to GPU buffer (keep resident)
+- **Validation on GPU:** Verify DAG copied correctly to GPU (sample items)
+- No GPU computation needed; CPU generation acceptable for one-time setup
+- **Browser-Standalone:** Keep both cache and DAG in GPU memory (no IndexedDB)
 
 
-#### Step 8 — Full Mining Pipeline
+#### Step 6 — GPU Hashimoto Shader
 
-- Integrate cache generation → DAG generation → Hashimoto → final hash.
-- Batch process multiple nonces in parallel on GPU.
-- Implement input buffer for nonces, output buffer for hashes.
-- Compare results against geth/ethminer for correctness validation.
+- Implement GPU compute shader for Hashimoto algorithm
+- Input: batch of nonces (e.g., 1000s in parallel)
+- Algorithm: For each nonce:
+  - Mix with DAG items (256 random accesses per nonce)
+  - FNV-1a mixing with cache/DAG lookups
+  - Final hash with Keccak-512
+- Output: Full hashes for all nonces
+- Test with known mining nonces against reference implementation
+
+
+#### Step 7 — GPU Difficulty Filter
+
+- Implement second GPU kernel for difficulty comparison
+- Input: hashes from Hashimoto kernel
+- Algorithm: For each hash, check if `hash < 2^256 / difficulty`
+- Output: **Only winning nonces** (keep empty slots as zeros or use atomics for compaction)
+- **Key optimization:** Massively reduce GPU→CPU transfer bandwidth
+- Test with known difficulty thresholds
+
+
+#### Step 8 — Full Mining Pipeline Integration
+
+- Orchestrate setup + mining phases
+- Setup (once per epoch): Generate cache/DAG, upload to GPU
+- Mining loop:
+  1. Launch Hashimoto kernel with batch nonces
+  2. Launch difficulty filter kernel
+  3. Transfer only winning nonces back to CPU
+  4. CPU validates and submits solutions
+- Benchmark: Measure hashes/second and transfer efficiency
+- Compare against ethminer/geth for correctness validation
 
 
 #### Step 9 — Performance Profiling & Optimization
 
-- Use WebGPU Inspector to profile shader execution time, memory bandwidth, and occupancy.
-- Measure throughput: hashes/second vs CPU reference.
-- Profile memory usage: GPU buffers for cache, DAG, and work items.
-- Identify bottlenecks and optimize shader code.
-- Conduct stability tests under sustained mining simulation.
+- Use WebGPU Inspector to profile shader execution time, memory bandwidth, occupancy
+- Measure throughput: hashes/second on GPU vs CPU reference
+- Profile GPU memory usage and transfer times
+- Optimize batch sizes for best GPU utilization
+- Test stability under sustained mining (minutes/hours)
+- Analyze transfer overhead savings from GPU difficulty filtering
 
 ***
 
-### GPU-First Development Guidelines
+### GPU-First Development Guidelines (Browser-Standalone)
 
-- **Validate against CPU reference:** Always compare GPU results against known-good CPU implementations (js-sha3, reference Ethash) to catch bugs early.
-- **Storage optimization:** Cache and DAG are computed once on GPU, stored in IndexedDB, and reloaded for subsequent runs (avoid expensive regeneration).
-- **Binary format:** Store cache/DAG in binary format matching GPU buffer layout for direct `GPUBuffer` creation without conversion overhead.
-- **Parallel processing:** GPU work should batch-process items whenever possible (e.g., compute multiple cache items, DAG items, or hashes in parallel).
-- **Memory considerations:** DAG is ~1GB for epoch 0; use GPU streaming or staging buffers if needed for large datasets.
+- **Validate against CPU reference:** Always compare GPU results against known-good CPU implementations (@ethereumjs/ethash, js-sha3) to catch bugs early.
+- **Setup vs Mining:** Separate phases - setup (cache/DAG generation) runs once per epoch on CPU; mining (Hashimoto + difficulty) runs continuously on GPU.
+- **GPU Memory Resident:** Keep cache + DAG in GPU memory for entire epoch (no IndexedDB needed for browser-standalone).
+- **GPU Filtering:** Minimize GPU→CPU transfer by filtering on GPU (difficulty check) before returning results.
+- **Parallel Mining:** Batch process 1000s of nonces in parallel on GPU (256 threads per nonce × large workgroups).
+- **Direct Buffer Mapping:** Transfer cache/DAG as binary blobs directly to GPU buffers (zero-copy when possible).
+- **Memory considerations:** DAG is ~1GB for epoch 0; stays in GPU VRAM for entire mining epoch. Validate copy integrity before mining begins.
 
 ***
 

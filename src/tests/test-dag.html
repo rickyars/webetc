@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>DAG Generation - Reference Comparison Test</title>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font-family: monospace;
+        padding: 20px;
+        background: #1e1e1e;
+        color: #d4d4d4;
+      }
+      h1 {
+        color: #4fc3f7;
+        border-bottom: 2px solid #4fc3f7;
+        padding-bottom: 10px;
+      }
+      h2 {
+        color: #9cdcfe;
+        margin-top: 20px;
+      }
+      #log {
+        background: #252526;
+        border: 1px solid #464647;
+        border-radius: 4px;
+        padding: 15px;
+        font-size: 11px;
+        max-height: 1000px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+      .log-entry {
+        margin: 2px 0;
+      }
+      .success { color: #4ec9b0; }
+      .error { color: #f48771; }
+      .warning { color: #ce9178; }
+      .info { color: #9cdcfe; }
+      .debug { color: #6a9955; opacity: 0.8; }
+      button {
+        background: #0e639c;
+        color: #fff;
+        border: none;
+        padding: 10px 20px;
+        margin-top: 20px;
+        cursor: pointer;
+        font-family: monospace;
+        border-radius: 4px;
+      }
+      button:hover {
+        background: #1177bb;
+      }
+      button:disabled {
+        background: #555;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🔬 DAG Generation - GPU vs CPU Reference</h1>
+    <p>Comparing GPU DAG generation against @ethereumjs/ethash CPU reference</p>
+
+    <h2>Results:</h2>
+    <div id="log"></div>
+
+    <button id="runBtn">Run Comparison Test</button>
+    <button id="clearBtn" style="margin-left: 10px;">Clear Log</button>
+
+    <script type="module">
+      import { runTest } from './test-dag.ts';
+
+      const clearBtn = document.getElementById('clearBtn');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          const log = document.getElementById('log');
+          if (log) log.textContent = '';
+        });
+      }
+
+      const runBtn = document.getElementById('runBtn');
+      if (runBtn) {
+        runBtn.addEventListener('click', runTest);
+      }
+    </script>
+  </body>
+</html>

@@ -18,7 +18,11 @@
     "vitest": "^1.0.0"
   },
   "dependencies": {
+    "@ethereumjs/ethash": "^10.0.0",
+    "@ethereumjs/util": "^10.0.0",
+    "@webgpu/types": "^0.1.66",
     "js-sha3": "^0.9.3",
-    "keccak256": "^1.0.6"
+    "keccak256": "^1.0.6",
+    "webgpu": "^0.3.8"
   }
 }

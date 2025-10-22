@@ -10,70 +10,83 @@ This project demonstrates GPU-accelerated Ethereum mining computations entirely 
 
 ## Project Status
 
-### ✅ Complete (GPU-Ready Infrastructure)
-- **Step 1:** WebGPU environment setup and device initialization
-- **Step 2:** Basic compute shader testing (buffer I/O validation)
-- **Step 3:** Keccak CPU reference implementation with test vectors
+### ✅ Phase 1: GPU Keccak - COMPLETE
+- **Step 1:** WebGPU environment setup and device initialization ✅
+- **Step 2:** Basic compute shader testing (buffer I/O validation) ✅
+- **Step 3:** Keccak-256 & Keccak-512 GPU implementation ✅
+  - Direct ports of proven js-sha3 algorithm
+  - 5 test vectors: 3× Keccak-256, 2× Keccak-512
+  - All tests passing, GPU output matches CPU reference exactly
 
-### ⏳ Pending (GPU Implementation)
-- **Step 4:** Cache generation on GPU (WGSL shader)
-- **Step 5:** DAG generation on GPU (WGSL shader)
-- **Step 6:** DAG validation (GPU vs reference)
-- **Step 7:** Hashimoto GPU shader implementation
-- **Step 8:** Full mining pipeline on GPU
-- **Step 9:** Performance profiling and optimization
+### ⏳ Phase 2: GPU Hashimoto - IN PROGRESS
+- **Step 4:** Cache generation (CPU via @ethereumjs/ethash, transferred to GPU memory)
+- **Step 5:** DAG generation (CPU via @ethereumjs/ethash, transferred to GPU memory)
+- **Step 6:** GPU Hashimoto shader (parallel nonce mining)
+- **Step 7:** GPU difficulty filtering (keep only valid solutions)
+- **Step 8:** Full mining pipeline on GPU with large batch processing
+
+### Test Files
+- **GPU Keccak Test:** `src/test-keccak.html` - 5/5 tests passing
+- **Main UI:** `src/index.html` - UI for running all steps
 
 ## Architecture
 
-### GPU-First Design
-- All heavy computations (Keccak, cache/DAG generation, Hashimoto) run on **GPU**
-- CPU handles storage, I/O, and orchestration only
-- Validation against CPU reference implementations ensures correctness
+### Browser-Standalone GPU-First Design
+
+**Setup Phase (Once per epoch):**
+1. Generate cache on CPU via @ethereumjs/ethash
+2. Generate DAG on CPU via @ethereumjs/ethash
+3. Transfer both to GPU memory (keep resident)
+
+**Mining Phase (Continuous):**
+1. Launch GPU kernel with batch of nonces (1000s in parallel)
+2. GPU Hashimoto: Process nonces with DAG/cache lookups + Keccak-512
+3. GPU difficulty filter: Keep only solutions meeting difficulty
+4. Transfer winning nonces back to CPU
+5. CPU validates and submits
 
 ### Core Components
 
 - **GPU Context Manager** (`src/gpu/context.ts`) - WebGPU device initialization
 - **GPU Utils** (`src/gpu/utils.ts`) - Buffer management, pipeline creation
-- **Keccak Reference** (`src/crypto/keccak-cpu.ts`) - CPU reference for validation (js-sha3)
+- **Ethash Reference** (`src/crypto/ethash-reference.ts`) - Official @ethereumjs/ethash wrapper
+- **Keccak Reference** (`src/crypto/keccak-cpu.ts`) - CPU reference validation (js-sha3)
 - **UI Logger** (`src/ui/logger.ts`) - Debug output and progress tracking
-- **CPU Reference Implementations** (`src/reference/`) - Used only for validation
 
-### Planned GPU Shaders
-- `Keccak-512.wgsl` - Batch Keccak-512 hashing
-- `Cache-Generator.wgsl` - GPU cache item generation
-- `DAG-Generator.wgsl` - GPU DAG item generation
-- `Hashimoto.wgsl` - GPU Hashimoto algorithm
-- `Mining-Pipeline.wgsl` - Integrated mining compute
+### GPU Shaders
+- ✅ `keccak-256-shader.wgsl` - Batch Keccak-256 hashing
+- ✅ `keccak-512-shader.wgsl` - Batch Keccak-512 hashing
+- ⏳ `hashimoto-shader.wgsl` - GPU Hashimoto algorithm (in progress)
+- ⏳ `difficulty-filter-shader.wgsl` - GPU difficulty comparison (in progress)
 
 ## Project Structure
 
 ```
 webetc/
 ├── src/
-│   ├── gpu/                     # WebGPU infrastructure
-│   │   ├── context.ts           # Device management
-│   │   └── utils.ts             # GPU utilities
-│   ├── compute/                 # WGSL shaders (to be implemented)
-│   │   ├── keccak-shader.wgsl   # Keccak-512 GPU shader
-│   │   └── ...                  # Other GPU shaders
+│   ├── gpu/                           # WebGPU infrastructure
+│   │   ├── context.ts                 # Device management
+│   │   └── utils.ts                   # GPU utilities
+│   ├── compute/                       # WGSL compute shaders
+│   │   ├── keccak-256-shader.wgsl     # ✅ Keccak-256 GPU shader
+│   │   ├── keccak-512-shader.wgsl     # ✅ Keccak-512 GPU shader
+│   │   ├── hashimoto-shader.wgsl      # ⏳ Hashimoto mining kernel
+│   │   └── difficulty-filter-shader.wgsl # ⏳ Difficulty comparison
 │   ├── crypto/
-│   │   └── keccak-cpu.ts        # CPU reference (validation)
-│   ├── reference/               # CPU implementations for validation
-│   │   ├── cache-builder-cpu.ts # CPU DAG/cache generation
-│   │   ├── hashimoto-cpu.ts     # CPU Hashimoto algorithm
-│   │   ├── fnv-cpu.ts           # FNV hash function
-│   │   └── README.md            # Reference usage guide
+│   │   ├── ethash-reference.ts        # @ethereumjs/ethash wrapper
+│   │   └── keccak-cpu.ts              # js-sha3 CPU reference
 │   ├── ui/
-│   │   └── logger.ts            # Debug UI and progress bars
-│   ├── index.html               # HTML template
-│   └── main.ts                  # Entry point
-├── dist/                        # Build output (auto-generated)
-├── CLAUDE.md                    # Project plan (GPU-first)
-├── README.md                    # This file
-├── TESTING_GUIDE.md             # Testing and validation procedures
-├── ETHASH_ALGORITHM_REFERENCE.md # Algorithm reference
-├── STATUS.md                    # Implementation status
-└── package.json                 # Dependencies & scripts
+│   │   └── logger.ts                  # Debug UI and progress
+│   ├── utils/
+│   │   └── progress.ts                # Progress monitoring
+│   ├── index.html                     # Main HTML template
+│   ├── main.ts                        # Main entry point
+│   ├── test-keccak.ts                 # GPU Keccak test harness
+│   └── test-keccak.html               # GPU Keccak test page
+├── dist/                              # Build output (auto-generated)
+├── CLAUDE.md                          # Project plan & roadmap
+├── README.md                          # This file
+└── package.json                       # Dependencies & scripts
 ```
 
 ## Getting Started
@@ -82,7 +95,6 @@ webetc/
 
 - Node.js 18+ with npm
 - Browser with WebGPU support (Chrome 113+, Edge 113+)
-- 4GB+ RAM (for full DAG generation when implemented)
 
 ### Installation
 
@@ -90,40 +102,87 @@ webetc/
 npm install
 ```
 
-### Quick Start
+### Quick Start - Test GPU Keccak-256 & Keccak-512
 
-**Development mode (hot-reload):**
 ```bash
 npm run dev
 ```
-Visit `http://localhost:5173` in your browser.
 
-**Build standalone HTML:**
-```bash
-npm run build
+Then open: **http://localhost:5173/src/test-keccak.html**
+
+Expected output (5 tests total):
+```
+✓ GPU device created
+
+Test: "(empty)" [Keccak-256]
+  GPU: c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+  EXP: c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+  ✓ MATCH
+
+Test: "abc" [Keccak-256]
+  GPU: 4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45
+  EXP: 4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45
+  ✓ MATCH
+
+Test: "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq" [Keccak-256]
+  GPU: 45d3b367a6904e6e8d502ee04999a7c27647f91fa845d456525fd352ae3d7371
+  EXP: 45d3b367a6904e6e8d502ee04999a7c27647f91fa845d456525fd352ae3d7371
+  ✓ MATCH
+
+Test: "(empty)" [Keccak-512]
+  GPU: 0eab42de4c3ceb9235fc91acffe746b29c29a8c366b7c60e4e67c466f36a4304c00fa9caf9d87976ba469bcbe06713b435f091ef2769fb160cdab33d3670680e
+  EXP: 0eab42de4c3ceb9235fc91acffe746b29c29a8c366b7c60e4e67c466f36a4304c00fa9caf9d87976ba469bcbe06713b435f091ef2769fb160cdab33d3670680e
+  ✓ MATCH
+
+Test: "abc" [Keccak-512]
+  GPU: 18587dc2ea106b9a1563e32b3312421ca164c7f1f07bc922a9c83d77cea3a1e5d0c69910739025372dc14ac9642629379540c17e2a65b19d77aa511a9d00bb96
+  EXP: 18587dc2ea106b9a1563e32b3312421ca164c7f1f07bc922a9c83d77cea3a1e5d0c69910739025372dc14ac9642629379540c17e2a65b19d77aa511a9d00bb96
+  ✓ MATCH
+
+Results: 5/5 tests passed
 ```
 
-**Run with Vite preview:**
+### Run CPU Tests
+
 ```bash
-npm run preview
+npm test
 ```
 
-## Usage
+All 8 Keccak tests pass (CPU reference validation). Note: This is separate from GPU tests.
 
-Open the generated `standalone.html` or visit the dev server. The UI shows:
+## Implementation
 
-- **Step 1:** WebGPU initialization status
-- **Step 2:** Compute shader buffer I/O test
-- **Step 3:** Keccak-256/512 reference validation
-- **Steps 4-9:** Placeholder UI for GPU implementations (coming soon)
+### GPU Keccak Test Suite
 
-### Testing
+**Files:**
+- `src/test-keccak.ts` - TypeScript test harness (imports shaders)
+- `src/test-keccak.html` - Test page
+- `src/compute/keccak-256-shader.wgsl` - Keccak-256 GPU shader
+- `src/compute/keccak-512-shader.wgsl` - Keccak-512 GPU shader
 
-The test suite validates:
-- ✅ Keccak-256 against known test vectors
-- ✅ Keccak-512 against known test vectors
-- ✅ WebGPU device capabilities
-- (GPU implementations will validate against CPU reference)
+**Key features:**
+- **Algorithm:** Direct port of js-sha3 Keccak-f[1600] permutation
+- **24 rounds** with correct round constants
+- **50 u32 storage** (25 u64 lanes as high/low pairs)
+- **Keccak-256:** 136-byte input (rate), 32-byte output
+- **Keccak-512:** 72-byte input (rate), 64-byte output
+- **5 test vectors** from js-sha3 (verified)
+
+**Why this works:**
+1. Direct port of proven js-sha3 algorithm (battle-tested)
+2. No type aliases - uses `vec2<u32>` directly (compatible with all browsers)
+3. Proper Vite integration - clean TypeScript, not inline HTML
+4. Hardcoded test vectors - no external dependencies for tests
+
+### Test Vectors
+
+Generated from js-sha3 and hardcoded in `src/test-keccak.ts`:
+
+**Keccak-256 (3 tests):**
+- Empty string, "abc", long string
+
+**Keccak-512 (2 tests):**
+- Empty string, "abc"
 
 ## Key Concepts
 
@@ -156,10 +215,11 @@ The test suite validates:
 
 ## Performance Targets
 
-- **Cache Generation:** < 1 second on GPU
-- **DAG Generation:** < 30 seconds on GPU
-- **Hash Throughput:** > 10M hashes/second on modern GPU
-- **Memory Bandwidth:** Optimize for GPU VRAM constraints
+- **Cache Generation:** ~30 seconds on CPU (once per epoch, acceptable)
+- **DAG Generation:** ~2-3 minutes on CPU (once per epoch, acceptable)
+- **Mining Hash Throughput:** > 10M hashes/second on GPU (batches of 1000+ nonces)
+- **Memory Bandwidth:** DAG transfer overhead minimized by filtering on GPU
+- **Difficulty Filter Selectivity:** Only transfer winning nonces (1 in 10^15 hashes)
 
 ## Debugging
 

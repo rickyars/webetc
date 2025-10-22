@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Full Mining Pipeline Test</title>
+  <script>
+    // Helper function for device creation with fallback limits
+    async function createGPUDevice() {
+      const adapter = await navigator.gpu?.requestAdapter();
+      if (!adapter) {
+        throw new Error('WebGPU not available');
+      }
+
+      // Try generous limits first, fallback to lower if needed
+      const limitConfigs = [
+        { maxBufferSize: 6442450944, maxStorageBufferBindingSize: 2147483648 }, // 6GB / 2GB
+        { maxBufferSize: 4294967296, maxStorageBufferBindingSize: 1073741824 }, // 4GB / 1GB
+        { maxBufferSize: 2147483644, maxStorageBufferBindingSize: 1073741824 }, // 2GB / 1GB
+      ];
+
+      for (const limits of limitConfigs) {
+        try {
+          const device = await adapter.requestDevice({ requiredLimits: limits });
+          return device;
+        } catch (e) {
+          // Try next configuration
+          continue;
+        }
+      }
+
+      throw new Error('Failed to create GPU device with any buffer limit');
+    }
+  </script>
+  <style>
+    body {
+      font-family: monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 20px;
+      margin: 0;
+    }
+    #log {
+      background: #252526;
+      border: 1px solid #3e3e42;
+      padding: 15px;
+      border-radius: 4px;
+      height: 700px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      font-size: 12px;
+    }
+    h1 {
+      color: #4fc3f7;
+      margin-bottom: 10px;
+    }
+    .warning {
+      background: #5a4a00;
+      border-left: 4px solid #ffcc00;
+      padding: 10px;
+      margin: 10px 0;
+    }
+    .success {
+      background: #004a00;
+      border-left: 4px solid #00ff00;
+      padding: 10px;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🚀 Full Ethash Mining Pipeline Test</h1>
+
+  <div class="warning">
+    <strong>⚠️ WARNING:</strong> This test takes 5-10 minutes total:<br />
+    - 2-5 minutes: DAG generation (first run only)<br />
+    - A few seconds: Mine 1000 nonces and filter results<br />
+    - A minute: Validate winners against CPU reference
+  </div>
+
+  <div id="log">Initializing pipeline test...</div>
+
+  <script type="module" src="./test-full-pipeline.ts"></script>
+</body>
+</html>
