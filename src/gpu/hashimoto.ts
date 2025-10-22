@@ -180,24 +180,7 @@ export async function runHashimotoBatchGPU(
   paramsData[1] = n_items;
   paramsData[2] = cache_items;
 
-  console.log('DEBUG: Hashimoto params (before unmap):');
-  console.log(`  num_nonces = ${paramsData[0]}`);
-  console.log(`  dag_items (n) = ${paramsData[1]}`);
-
   paramsBuffer.unmap();
-
-  // Log after unmap using stored values
-  console.log('DEBUG: Hashimoto params (after unmap, using stored values):');
-  console.log(`  num_nonces = ${num_nonces}`);
-  console.log(`  dag_items (n) = ${n_items}`);
-  console.log(`  dag_items as decimal = ${n_items.toString()}`);
-  console.log(`  dag_items / 2 = ${(n_items / 2).toString()}`);
-  console.log(`  dag.length = ${setup.dag.length.toString()}`);
-  console.log(`  dag.byteLength = ${setup.dag.byteLength.toString()}`);
-  console.log(`  Verify: dag.length / 16 = ${(setup.dag.length / 16).toString()}`);
-  console.log(`  (Should match dag_items: ${n_items.toString()})`);
-  console.log(`  Max DAG index p = ${((n_items / 2) * 2 - 2).toString()}`);
-  console.log(`  Max DAG u32 offset = ${(((n_items / 2) * 2 - 2) * 16).toString()}`);
 
   // Create compute pipeline with explicit layout to ensure all bindings are preserved
   // Concatenate Keccak functions from their respective shaders
@@ -239,7 +222,7 @@ export async function runHashimotoBatchGPU(
     }
   }
 
-  // Find keccak256 function
+  // Find keccak256 function (we'll skip the RC constant since it's already included from keccak512)
   for (let i = 0; i < lines256.length; i++) {
     if (lines256[i].includes('fn keccak256(')) {
       keccak256FuncStartIdx = i;
@@ -250,9 +233,10 @@ export async function runHashimotoBatchGPU(
     }
   }
 
-  // Build shader code: FNV functions + RC constant + Keccak functions + Hashimoto shader
+  // Build shader code: FNV functions + RC constant (once) + Keccak functions + Hashimoto shader
   const rcCode = lines512.slice(rcStartIdx, rcEndIdx + 1).join('\n');
   const keccak512FunctionCode = lines512.slice(keccak512FuncStartIdx, keccak512EndIdx + 1).join('\n');
+  // For keccak256, ONLY extract the function, not the RC constant (to avoid duplicate const declaration)
   const keccak256FunctionCode = lines256.slice(keccak256FuncStartIdx, keccak256EndIdx + 1).join('\n');
 
   const combinedShader = fnvShader + '\n\n' + rcCode + '\n\n' + keccak512FunctionCode + '\n\n' + keccak256FunctionCode + '\n\n' + hashimotoShader;

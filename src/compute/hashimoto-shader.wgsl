@@ -1,4 +1,4 @@
-// GPU Hashimoto Implementation - CLEAN PORT
+// GPU Hashimoto Implementation - CLEAN PORT (NONCE REVERSAL FIX v2 - TIMESTAMP: 2025-10-22-16:17)
 // Direct line-by-line port of @ethereumjs/ethash Ethash.run()
 //
 // CPU Algorithm (from ethereumjs/ethash src/index.ts:211-254):
@@ -52,21 +52,26 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let nonce_hi = nonces[nonce_offset + 1u];
 
   // Reverse nonce: bytesReverse flips entire 8-byte array
-  // Original: [lo_byte0, lo_byte1, lo_byte2, lo_byte3, hi_byte0, hi_byte1, hi_byte2, hi_byte3]
-  // Reversed: [hi_byte3, hi_byte2, hi_byte1, hi_byte0, lo_byte3, lo_byte2, lo_byte1, lo_byte0]
-  // As u32 LE:
-  //   reversed[0] = hi_byte3|hi_byte2|hi_byte1|hi_byte0 (reversed hi)
-  //   reversed[1] = lo_byte3|lo_byte2|lo_byte1|lo_byte0 (reversed lo)
+  // The ethereumjs algorithm does: bytesReverse(nonce)
+  // For an 8-byte nonce [byte0, byte1, ..., byte7], this produces [byte7, byte6, ..., byte0]
+  //
+  // When we have nonce as two u32 LE values (nonce_lo, nonce_hi):
+  //   nonce_lo = byte0|byte1|byte2|byte3
+  //   nonce_hi = byte4|byte5|byte6|byte7
+  //
+  // After bytesReverse, the 8-byte array becomes [byte7, byte6, ..., byte0]
+  // When interpreted as two u32 LE values:
+  //   u32[0] = byte7|byte6|byte5|byte4 = bytesReverse(nonce_hi)
+  //   u32[1] = byte3|byte2|byte1|byte0 = bytesReverse(nonce_lo)
+  //
+  // So we need to: (1) byte-reverse each u32, (2) swap their order
 
-  // NOTE: Testing shows GPU is producing same hashes as WITHOUT reversal
-  // This code may not be executing - trying explicit reversal instead
+  let nonce_lo_reversed = ((nonce_lo & 0x000000FFu) << 24u) | ((nonce_lo & 0x0000FF00u) << 8u) |
+                          ((nonce_lo & 0x00FF0000u) >> 8u) | ((nonce_lo & 0xFF000000u) >> 24u);
+  let nonce_hi_reversed = ((nonce_hi & 0x000000FFu) << 24u) | ((nonce_hi & 0x0000FF00u) << 8u) |
+                          ((nonce_hi & 0x00FF0000u) >> 8u) | ((nonce_hi & 0xFF000000u) >> 24u);
 
-  // Try a different approach: do NOT reverse, just use nonce as-is
-  // (This will match what the GPU was producing before - for testing only)
-  let nonce_lo_reversed = nonce_lo;
-  let nonce_hi_reversed = nonce_hi;
-
-  // ===== STAGE 1: keccak512(header || nonce) =====
+  // ===== STAGE 1: keccak512(header || reversed_nonce) =====
 
   var keccak_input: array<u32, 18> = array<u32, 18>();
 
@@ -75,9 +80,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     keccak_input[i] = header[i];
   }
 
-  // Next 8 bytes: nonce (NOT reversed - testing if this matches GPU output)
-  keccak_input[8u] = nonce_lo;
-  keccak_input[9u] = nonce_hi;
+  // Next 8 bytes: reversed nonce (byte-reversed and swapped)
+  keccak_input[8u] = nonce_hi_reversed;  // SWAPPED: hi goes first after reversal
+  keccak_input[9u] = nonce_lo_reversed;  // SWAPPED: lo goes second after reversal
 
   // Padding for Keccak-512 (72-byte rate = 18 u32)
   // Byte 40 (u32[10] byte 0): 0x01

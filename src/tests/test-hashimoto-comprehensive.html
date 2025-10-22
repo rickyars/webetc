@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>GPU Hashimoto - Comprehensive Verification</title>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        font-family: monospace;
+        padding: 20px;
+        background: #1e1e1e;
+        color: #d4d4d4;
+      }
+      h1 {
+        color: #4fc3f7;
+        border-bottom: 2px solid #4fc3f7;
+        padding-bottom: 10px;
+      }
+      #log {
+        background: #252526;
+        border: 1px solid #464647;
+        border-radius: 4px;
+        padding: 15px;
+        font-size: 12px;
+        max-height: 800px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        min-height: 400px;
+        font-family: 'Courier New', monospace;
+      }
+      .match {
+        color: #4ec9b0;
+      }
+      .mismatch {
+        color: #f48771;
+      }
+      .summary {
+        margin-top: 20px;
+        padding: 15px;
+        border: 2px solid #4fc3f7;
+        border-radius: 4px;
+        background: #2d2d30;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>GPU Hashimoto - Comprehensive Verification</h1>
+    <p>Generates random nonces and compares GPU output against ethereumjs in real-time</p>
+
+    <div id="log"></div>
+
+    <script type="module">
+      import { setupHashimotoGPU, runHashimotoBatchGPU } from '../gpu/hashimoto';
+      import { createGPUDevice } from '../gpu/device-helper';
+      import { keccak256 } from 'ethereum-cryptography/keccak.js';
+      import { Ethash } from '@ethereumjs/ethash';
+
+      const logEl = document.getElementById('log');
+
+      function log(msg) {
+        logEl.innerHTML += msg + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg);
+      }
+
+      function bytesToHex(bytes) {
+        return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+      }
+
+      function generateRandomNonce() {
+        const nonce = new Uint8Array(8);
+        crypto.getRandomValues(nonce);
+        return nonce;
+      }
+
+      function generateSequentialNonce(value) {
+        const nonce = new Uint8Array(8);
+        const view = new DataView(nonce.buffer);
+        view.setBigUint64(0, BigInt(value), true); // little-endian
+        return nonce;
+      }
+
+      async function run() {
+        try {
+          log('=== GPU HASHIMOTO - COMPREHENSIVE VERIFICATION ===\n');
+          log('This test generates nonces and compares GPU vs ethereumjs in real-time\n');
+
+          const device = await createGPUDevice();
+          log('✓ GPU device ready\n');
+
+          // Test header
+          const testHeader = new TextEncoder().encode('test-block-header');
+          const headerHash = keccak256(testHeader);
+          const headerHashBytes = new Uint8Array(headerHash.buffer, headerHash.byteOffset, 32);
+
+          log('Test Header: "test-block-header"');
+          log('Header Hash: ' + bytesToHex(headerHash).substring(0, 32) + '...\n');
+
+          log('Setting up Hashimoto for epoch 0...');
+          const setup = await setupHashimotoGPU(0, device);
+          log('✓ Setup complete (Cache + DAG loaded on GPU)\n');
+
+          // Setup ethereumjs for CPU reference
+          const ethash = new Ethash();
+          const CACHE_INIT_BYTES = 16 * 1024 * 1024;
+          const seed = new Uint8Array(32);
+          const cache = ethash.mkcache(CACHE_INIT_BYTES, seed);
+          ethash.cache = cache;
+          ethash.fullSize = 1024 * 1024 * 1024;
+          log('✓ ethereumjs reference ready\n');
+
+          log('='.repeat(80));
+          log('TEST 1: Sequential nonces (0, 1, 2, ..., 9)');
+          log('='.repeat(80) + '\n');
+
+          const sequentialNonces = [];
+          for (let i = 0; i < 10; i++) {
+            sequentialNonces.push(generateSequentialNonce(i));
+          }
+
+          const gpuResult1 = await runHashimotoBatchGPU(
+            headerHashBytes,
+            sequentialNonces,
+            device,
+            setup
+          );
+
+          log(`GPU processed ${sequentialNonces.length} nonces in ${gpuResult1.timeMs.toFixed(2)}ms\n`);
+
+          let matches1 = 0;
+          for (let i = 0; i < sequentialNonces.length; i++) {
+            const nonce = sequentialNonces[i];
+            const gpuHash = gpuResult1.results[i].hash;
+            const cpuResult = ethash.run(headerHashBytes, nonce, ethash.fullSize);
+            const cpuHash = cpuResult.hash;
+
+            const match = bytesToHex(gpuHash) === bytesToHex(cpuHash);
+            if (match) matches1++;
+
+            const status = match ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
+            const gpuHashStr = bytesToHex(gpuHash);
+            const cpuHashStr = bytesToHex(cpuHash);
+
+            log(`  Nonce ${i.toString().padStart(2)}: ${bytesToHex(nonce)}`);
+            log(`    GPU: ${gpuHashStr.substring(0, 16)}...${gpuHashStr.substring(gpuHashStr.length - 16)}`);
+            log(`    CPU: ${cpuHashStr.substring(0, 16)}...${cpuHashStr.substring(cpuHashStr.length - 16)} ${status}`);
+
+            if (!match) {
+              log(`    <span class="mismatch">FULL GPU: ${gpuHashStr}</span>`);
+              log(`    <span class="mismatch">FULL CPU: ${cpuHashStr}</span>`);
+            }
+            log('');
+          }
+
+          log(`\nResult: ${matches1}/${sequentialNonces.length} matches\n`);
+
+          log('='.repeat(80));
+          log('TEST 2: Random nonces (20 random values)');
+          log('='.repeat(80) + '\n');
+
+          const randomNonces = [];
+          for (let i = 0; i < 20; i++) {
+            randomNonces.push(generateRandomNonce());
+          }
+
+          const gpuResult2 = await runHashimotoBatchGPU(
+            headerHashBytes,
+            randomNonces,
+            device,
+            setup
+          );
+
+          log(`GPU processed ${randomNonces.length} nonces in ${gpuResult2.timeMs.toFixed(2)}ms\n`);
+
+          let matches2 = 0;
+          for (let i = 0; i < randomNonces.length; i++) {
+            const nonce = randomNonces[i];
+            const gpuHash = gpuResult2.results[i].hash;
+            const cpuResult = ethash.run(headerHashBytes, nonce, ethash.fullSize);
+            const cpuHash = cpuResult.hash;
+
+            const match = bytesToHex(gpuHash) === bytesToHex(cpuHash);
+            if (match) matches2++;
+
+            const status = match ? '<span class="match">✓</span>' : '<span class="mismatch">✗</span>';
+            const gpuHashStr = bytesToHex(gpuHash);
+            const cpuHashStr = bytesToHex(cpuHash);
+
+            log(`  Nonce ${i.toString().padStart(2)}: ${bytesToHex(nonce)}`);
+            log(`    GPU: ${gpuHashStr.substring(0, 16)}...${gpuHashStr.substring(gpuHashStr.length - 16)}`);
+            log(`    CPU: ${cpuHashStr.substring(0, 16)}...${cpuHashStr.substring(cpuHashStr.length - 16)} ${status}`);
+
+            if (!match) {
+              log(`    <span class="mismatch">FULL GPU: ${gpuHashStr}</span>`);
+              log(`    <span class="mismatch">FULL CPU: ${cpuHashStr}</span>`);
+            }
+            log('');
+          }
+
+          log(`\nResult: ${matches2}/${randomNonces.length} matches\n`);
+
+          log('='.repeat(80));
+          log('TEST 3: Large batch (100 random nonces)');
+          log('='.repeat(80) + '\n');
+
+          const largeBatch = [];
+          for (let i = 0; i < 100; i++) {
+            largeBatch.push(generateRandomNonce());
+          }
+
+          const gpuResult3 = await runHashimotoBatchGPU(
+            headerHashBytes,
+            largeBatch,
+            device,
+            setup
+          );
+
+          log(`GPU processed ${largeBatch.length} nonces in ${gpuResult3.timeMs.toFixed(2)}ms`);
+          log(`Average: ${(gpuResult3.timeMs / largeBatch.length).toFixed(2)}ms per nonce\n`);
+
+          log('Verifying all 100 nonces against ethereumjs...');
+          let matches3 = 0;
+          for (let i = 0; i < largeBatch.length; i++) {
+            const nonce = largeBatch[i];
+            const gpuHash = gpuResult3.results[i].hash;
+            const cpuResult = ethash.run(headerHashBytes, nonce, ethash.fullSize);
+            const cpuHash = cpuResult.hash;
+
+            const match = bytesToHex(gpuHash) === bytesToHex(cpuHash);
+            if (match) matches3++;
+
+            if (!match) {
+              log(`  <span class="mismatch">✗ Nonce ${i}: ${bytesToHex(nonce).substring(0, 16)}... MISMATCH</span>`);
+              log(`    GPU: ${bytesToHex(gpuHash)}`);
+              log(`    CPU: ${bytesToHex(cpuHash)}`);
+            }
+          }
+
+          log(`Result: ${matches3}/${largeBatch.length} matches\n`);
+
+          // Final summary
+          const totalMatches = matches1 + matches2 + matches3;
+          const totalTests = sequentialNonces.length + randomNonces.length + largeBatch.length;
+
+          log('\n' + '='.repeat(80));
+          log('FINAL SUMMARY');
+          log('='.repeat(80));
+          log(`Total nonces tested: ${totalTests}`);
+          log(`Matches: ${totalMatches}`);
+          log(`Mismatches: ${totalTests - totalMatches}`);
+          log(`Success rate: ${((totalMatches / totalTests) * 100).toFixed(2)}%`);
+          log('');
+
+          if (totalMatches === totalTests) {
+            log('<span class="match">🎉 SUCCESS! All GPU hashes match ethereumjs perfectly!</span>');
+            log('<span class="match">GPU Hashimoto implementation is correct and ready for use.</span>');
+          } else {
+            log(`<span class="mismatch">❌ FAILURE! ${totalTests - totalMatches} mismatches detected.</span>`);
+            log('<span class="mismatch">GPU implementation needs further debugging.</span>');
+          }
+
+          // Cleanup
+          setup.cacheBuffer.destroy();
+          setup.dagBuffer.destroy();
+
+        } catch (err) {
+          log(`ERROR: ${err.message}`);
+          console.error(err);
+        }
+      }
+
+      run();
+    </script>
+  </body>
+</html>
