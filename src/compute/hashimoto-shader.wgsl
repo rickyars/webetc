@@ -58,12 +58,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   //   reversed[0] = hi_byte3|hi_byte2|hi_byte1|hi_byte0 (reversed hi)
   //   reversed[1] = lo_byte3|lo_byte2|lo_byte1|lo_byte0 (reversed lo)
 
-  let nonce_lo_reversed = ((nonce_lo & 0x000000FFu) << 24u) | ((nonce_lo & 0x0000FF00u) << 8u) |
-                          ((nonce_lo & 0x00FF0000u) >> 8u) | ((nonce_lo & 0xFF000000u) >> 24u);
-  let nonce_hi_reversed = ((nonce_hi & 0x000000FFu) << 24u) | ((nonce_hi & 0x0000FF00u) << 8u) |
-                          ((nonce_hi & 0x00FF0000u) >> 8u) | ((nonce_hi & 0xFF000000u) >> 24u);
+  // NOTE: Testing shows GPU is producing same hashes as WITHOUT reversal
+  // This code may not be executing - trying explicit reversal instead
 
-  // ===== STAGE 1: keccak512(header || reversed_nonce) =====
+  // Try a different approach: do NOT reverse, just use nonce as-is
+  // (This will match what the GPU was producing before - for testing only)
+  let nonce_lo_reversed = nonce_lo;
+  let nonce_hi_reversed = nonce_hi;
+
+  // ===== STAGE 1: keccak512(header || nonce) =====
 
   var keccak_input: array<u32, 18> = array<u32, 18>();
 
@@ -72,10 +75,9 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     keccak_input[i] = header[i];
   }
 
-  // Next 8 bytes: reversed nonce
-  // After full 8-byte reversal: positions 0-3 have reversed_hi, positions 4-7 have reversed_lo
-  keccak_input[8u] = nonce_hi_reversed;
-  keccak_input[9u] = nonce_lo_reversed;
+  // Next 8 bytes: nonce (NOT reversed - testing if this matches GPU output)
+  keccak_input[8u] = nonce_lo;
+  keccak_input[9u] = nonce_hi;
 
   // Padding for Keccak-512 (72-byte rate = 18 u32)
   // Byte 40 (u32[10] byte 0): 0x01
