@@ -21,6 +21,17 @@ export interface HashimotoSetup {
   dag: Uint32Array;
   cacheBuffer: GPUBuffer;
   dagBuffer: GPUBuffer;
+  // Optional: Reusable buffers for performance (avoid alloc/dealloc overhead)
+  reusableBuffers?: {
+    maxBatchSize: number;
+    headerHashBuffer: GPUBuffer;
+    noncesBuffer: GPUBuffer;
+    hashesBuffer: GPUBuffer;
+    paramsBuffer: GPUBuffer;
+    stagingBuffer: GPUBuffer;
+    // Cached pipeline to avoid recompilation
+    pipeline: GPUComputePipeline;
+  };
 }
 
 export interface HashimotoBatchResult {
@@ -110,6 +121,119 @@ export async function setupHashimotoGPU(
 }
 
 /**
+ * Create reusable buffers for high-performance mining
+ * Call this once and reuse buffers across many batches to avoid allocation overhead
+ *
+ * @param maxBatchSize Maximum number of nonces per batch
+ * @param device GPU device
+ * @param setup Hashimoto setup
+ */
+export function createReusableBuffers(
+  maxBatchSize: number,
+  device: GPUDevice,
+  setup: HashimotoSetup
+): void {
+  console.log(`Creating reusable buffers and pipeline for batch size ${maxBatchSize}...`);
+
+  const headerHashBuffer = device.createBuffer({
+    size: 32, // 8 u32
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+
+  const noncesBuffer = device.createBuffer({
+    size: maxBatchSize * 8, // 2 u32 per nonce
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+
+  const hashesBuffer = device.createBuffer({
+    size: maxBatchSize * 32, // 8 u32 per hash
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+  });
+
+  const paramsBuffer = device.createBuffer({
+    size: 16, // vec4<u32>
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const stagingBuffer = device.createBuffer({
+    size: maxBatchSize * 32,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  });
+
+  // Create compute pipeline ONCE (this is expensive - shader compilation!)
+  console.log('Compiling GPU shader and creating compute pipeline...');
+
+  // Build combined shader
+  const lines512 = keccak512Shader.split('\n');
+  const lines256 = keccak256Shader.split('\n');
+
+  let rcStartIdx = 0, rcEndIdx = 0;
+  let keccak512FuncStartIdx = 0, keccak512EndIdx = 0;
+  let keccak256FuncStartIdx = 0, keccak256EndIdx = 0;
+
+  for (let i = 0; i < lines512.length; i++) {
+    if (lines512[i].includes('const RC = array<u32, 48>')) {
+      rcStartIdx = i;
+      for (let j = i; j < lines512.length; j++) {
+        if (lines512[j].includes(');')) { rcEndIdx = j; break; }
+      }
+      break;
+    }
+  }
+
+  for (let i = 0; i < lines512.length; i++) {
+    if (lines512[i].includes('fn keccak512(')) keccak512FuncStartIdx = i;
+    if (keccak512FuncStartIdx > 0 && lines512[i].includes('return output;')) {
+      keccak512EndIdx = i + 1;
+      break;
+    }
+  }
+
+  for (let i = 0; i < lines256.length; i++) {
+    if (lines256[i].includes('fn keccak256(')) keccak256FuncStartIdx = i;
+    if (keccak256FuncStartIdx > 0 && lines256[i].includes('return output;')) {
+      keccak256EndIdx = i + 1;
+      break;
+    }
+  }
+
+  const rcCode = lines512.slice(rcStartIdx, rcEndIdx + 1).join('\n');
+  const keccak512FunctionCode = lines512.slice(keccak512FuncStartIdx, keccak512EndIdx + 1).join('\n');
+  const keccak256FunctionCode = lines256.slice(keccak256FuncStartIdx, keccak256EndIdx + 1).join('\n');
+  const combinedShader = fnvShader + '\n\n' + rcCode + '\n\n' + keccak512FunctionCode + '\n\n' + keccak256FunctionCode + '\n\n' + hashimotoShader;
+
+  const shaderModule = device.createShaderModule({ code: combinedShader });
+
+  const bindGroupLayout = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+    ],
+  });
+
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+  const pipeline = device.createComputePipeline({
+    layout: pipelineLayout,
+    compute: { module: shaderModule, entryPoint: 'main' },
+  });
+
+  console.log('✓ Pipeline compiled and cached');
+
+  setup.reusableBuffers = {
+    maxBatchSize,
+    headerHashBuffer,
+    noncesBuffer,
+    hashesBuffer,
+    paramsBuffer,
+    stagingBuffer,
+    pipeline,
+  };
+}
+
+/**
  * Run Hashimoto mining batch on GPU
  * Processes multiple nonces in parallel
  * Optionally filters results by difficulty threshold
@@ -142,51 +266,86 @@ export async function runHashimotoBatchGPU(
     noncesU32Data[i * 2 + 1] = view.getUint32(4, true);
   }
 
-  // Create input/output buffers
-  const headerHashBuffer = device.createBuffer({
-    size: headerHashU32.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  new Uint32Array(headerHashBuffer.getMappedRange()).set(headerHashU32);
-  headerHashBuffer.unmap();
+  // Use reusable buffers if available, otherwise create new ones
+  const useReusable = setup.reusableBuffers && nonces.length <= setup.reusableBuffers.maxBatchSize;
+  let headerHashBuffer: GPUBuffer;
+  let noncesBuffer: GPUBuffer;
+  let hashesBuffer: GPUBuffer;
+  let paramsBuffer: GPUBuffer;
+  let stagingBuffer: GPUBuffer;
 
-  const noncesBuffer = device.createBuffer({
-    size: noncesU32Data.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  new Uint32Array(noncesBuffer.getMappedRange()).set(noncesU32Data);
-  noncesBuffer.unmap();
+  if (useReusable) {
+    // Reuse existing buffers - just update contents
+    const buffers = setup.reusableBuffers!;
+    headerHashBuffer = buffers.headerHashBuffer;
+    noncesBuffer = buffers.noncesBuffer;
+    hashesBuffer = buffers.hashesBuffer;
+    paramsBuffer = buffers.paramsBuffer;
+    stagingBuffer = buffers.stagingBuffer;
 
-  const hashesBuffer = device.createBuffer({
-    size: nonces.length * 32, // 8 u32 per nonce = 32 bytes (final Keccak-256 hash)
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-  });
+    // Write data to buffers
+    device.queue.writeBuffer(headerHashBuffer, 0, headerHashU32);
+    device.queue.writeBuffer(noncesBuffer, 0, noncesU32Data);
 
-  const paramsBuffer = device.createBuffer({
-    size: 16, // vec4<u32>
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  });
-  const paramsData = new Uint32Array(paramsBuffer.getMappedRange());
+    const paramsData = new Uint32Array(4);
+    paramsData[0] = nonces.length;
+    paramsData[1] = setup.dag.length / 16;
+    paramsData[2] = setup.cache.length / 16;
+    device.queue.writeBuffer(paramsBuffer, 0, paramsData);
+  } else {
+    // Create new buffers (fallback for non-optimized path)
+    headerHashBuffer = device.createBuffer({
+      size: headerHashU32.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Uint32Array(headerHashBuffer.getMappedRange()).set(headerHashU32);
+    headerHashBuffer.unmap();
 
-  // Store values to local variables BEFORE unmapping
-  const num_nonces = nonces.length;
-  const n_items = setup.dag.length / 16;
-  const cache_items = setup.cache.length / 16;
+    noncesBuffer = device.createBuffer({
+      size: noncesU32Data.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Uint32Array(noncesBuffer.getMappedRange()).set(noncesU32Data);
+    noncesBuffer.unmap();
 
-  paramsData[0] = num_nonces;
-  paramsData[1] = n_items;
-  paramsData[2] = cache_items;
+    hashesBuffer = device.createBuffer({
+      size: nonces.length * 32,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
 
-  paramsBuffer.unmap();
+    paramsBuffer = device.createBuffer({
+      size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    const paramsData = new Uint32Array(paramsBuffer.getMappedRange());
+    paramsData[0] = nonces.length;
+    paramsData[1] = setup.dag.length / 16;
+    paramsData[2] = setup.cache.length / 16;
+    paramsBuffer.unmap();
 
-  // Create compute pipeline with explicit layout to ensure all bindings are preserved
-  // Concatenate Keccak functions from their respective shaders
-  // Extract only the function definitions (not the entry points)
-  const lines512 = keccak512Shader.split('\n');
-  const lines256 = keccak256Shader.split('\n');
+    stagingBuffer = device.createBuffer({
+      size: nonces.length * 32,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+  }
+
+  // Use cached pipeline if available, otherwise create new one
+  let pipeline: GPUComputePipeline;
+  let bindGroupLayout: GPUBindGroupLayout;
+
+  if (useReusable) {
+    // Reuse cached pipeline
+    pipeline = setup.reusableBuffers!.pipeline;
+    bindGroupLayout = pipeline.getBindGroupLayout(0);
+  } else {
+    // Create compute pipeline with explicit layout to ensure all bindings are preserved
+    // Concatenate Keccak functions from their respective shaders
+    // Extract only the function definitions (not the entry points)
+    const lines512 = keccak512Shader.split('\n');
+    const lines256 = keccak256Shader.split('\n');
 
   // Find the RC constant definition and function start/end for each shader
   let rcStartIdx = 0;
@@ -280,20 +439,23 @@ export async function runHashimotoBatchGPU(
     bindGroupLayouts: [bindGroupLayout],
   });
 
-  const pipeline = device.createComputePipeline({
-    layout: pipelineLayout,
-    compute: { module: shaderModule, entryPoint: 'main' },
-  });
+    pipeline = device.createComputePipeline({
+      layout: pipelineLayout,
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
 
-  // Log binding information for debugging
-  console.log('Pipeline created successfully');
-  console.log('');
-  console.log('Bind group configuration:');
-  console.log('  Binding 0 (header_hash): size=' + headerHashBuffer.size + ' bytes (should be 32)');
-  console.log('  Binding 1 (nonces): size=' + noncesBuffer.size + ' bytes');
-  console.log('  Binding 3 (dag): size=' + setup.dagBuffer.size + ' bytes = ' + (setup.dagBuffer.size / 1024 / 1024 / 1024).toFixed(2) + 'GB');
-  console.log('  Binding 4 (hashes): size=' + hashesBuffer.size + ' bytes (should be ' + (nonces.length * 32) + ')');
-  console.log('  Binding 5 (params): size=' + paramsBuffer.size + ' bytes');
+    // Log binding information for debugging
+    console.log('Pipeline created successfully');
+    console.log('');
+    console.log('Bind group configuration:');
+    console.log('  Binding 0 (header_hash): size=' + headerHashBuffer.size + ' bytes (should be 32)');
+    console.log('  Binding 1 (nonces): size=' + noncesBuffer.size + ' bytes');
+    console.log('  Binding 3 (dag): size=' + setup.dagBuffer.size + ' bytes = ' + (setup.dagBuffer.size / 1024 / 1024 / 1024).toFixed(2) + 'GB');
+    console.log('  Binding 4 (hashes): size=' + hashesBuffer.size + ' bytes (should be ' + (nonces.length * 32) + ')');
+    console.log('  Binding 5 (params): size=' + paramsBuffer.size + ' bytes');
+
+    bindGroupLayout = pipeline.getBindGroupLayout(0);
+  }
 
   // Create bind group - NOTE: Binding 2 (cache) is not included since Hashimoto shader doesn't use it
   const bindGroup = device.createBindGroup({
@@ -315,15 +477,17 @@ export async function runHashimotoBatchGPU(
   passEncoder.setPipeline(pipeline);
   passEncoder.setBindGroup(0, bindGroup);
 
-  const workgroupsNeeded = Math.ceil(nonces.length / 32);
+  const workgroupsNeeded = Math.ceil(nonces.length / 256);  // Match shader workgroup_size
   passEncoder.dispatchWorkgroups(workgroupsNeeded, 1, 1);
   passEncoder.end();
 
-  // Copy results to staging buffer
-  const stagingBuffer = device.createBuffer({
-    size: nonces.length * 32,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  });
+  // Copy results to staging buffer (only create if not reusing)
+  if (!useReusable) {
+    stagingBuffer = device.createBuffer({
+      size: nonces.length * 32,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+  }
 
   commandEncoder.copyBufferToBuffer(
     hashesBuffer,
@@ -351,12 +515,14 @@ export async function runHashimotoBatchGPU(
     });
   }
 
-  // Cleanup
-  headerHashBuffer.destroy();
-  noncesBuffer.destroy();
-  hashesBuffer.destroy();
-  paramsBuffer.destroy();
-  stagingBuffer.destroy();
+  // Cleanup (only destroy buffers if we created them, not if reusing)
+  if (!useReusable) {
+    headerHashBuffer.destroy();
+    noncesBuffer.destroy();
+    hashesBuffer.destroy();
+    paramsBuffer.destroy();
+    stagingBuffer.destroy();
+  }
 
   const endTime = performance.now();
   const hashimotoTimeMs = endTime - startTime;

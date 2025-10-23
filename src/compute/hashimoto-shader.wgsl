@@ -29,7 +29,7 @@ const MIX_WORDS = 32u;  // MIX_BYTES / 4
 // fn keccak512(input: array<u32, 18>) -> array<u32, 16>
 // fn keccak256(input: array<u32, 34>) -> array<u32, 8>
 
-@compute @workgroup_size(32)
+@compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
   let nonce_idx = global_id.x;
   let num_nonces = params.x;
