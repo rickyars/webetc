@@ -101,10 +101,10 @@ export async function setupHashimotoGPU(
   new Uint32Array(cacheBuffer.getMappedRange()).set(cache);
   cacheBuffer.unmap();
 
-  // Generate DAG on worker thread (non-blocking) and upload to GPU
+  // Generate DAG on GPU with chunked generation for >2.15 GB
   console.log(`\nGenerating DAG for epoch ${epoch}...`);
   let dag: Uint32Array;
-  let dagBuffer: GPUBuffer;
+  let dagBuffers: GPUBuffer[];
 
   try {
     const result = await generateDAGGPU(epoch, device, (progress) => {
@@ -113,55 +113,19 @@ export async function setupHashimotoGPU(
       );
     });
     dag = result.dag;
-    dagBuffer = result.dagBuffer;
+    dagBuffers = result.dagBuffers;
   } catch (error) {
     console.error('DAG generation failed:', error);
     throw error;
   }
 
-  console.log(`✓ DAG: ${(dag.byteLength / 1024 / 1024 / 1024).toFixed(2)} GB`);
+  console.log(`✓ DAG: ${(dag.byteLength / 1024 / 1024 / 1024).toFixed(2)} GB (${dagBuffers.length} buffer(s))`);
 
-  // Split DAG into multiple buffers if it exceeds WebGPU buffer size limit
+  // Calculate metadata
   const dagBytes = dag.byteLength;
-  const dagItems = dagBytes / 64; // Each DAG item is 64 bytes (16 u32s)
-  const maxBufferSize = device.limits.maxStorageBufferBindingSize;
-
-  console.log(`Max WebGPU buffer size: ${(maxBufferSize / 1e9).toFixed(2)} GB`);
-
-  // Determine how many buffers we need
-  const numBuffers = Math.ceil(dagBytes / maxBufferSize);
+  const dagItems = dagBytes / 64;
+  const numBuffers = dagBuffers.length;
   const itemsPerBuffer = Math.ceil(dagItems / numBuffers);
-  const bytesPerBuffer = itemsPerBuffer * 64;
-
-  if (numBuffers > 1) {
-    console.log(`⚠️  DAG exceeds single buffer limit - splitting into ${numBuffers} buffers`);
-  }
-  console.log(`Creating ${numBuffers} DAG buffer(s) (~${(bytesPerBuffer / 1e9).toFixed(2)} GB each)...`);
-
-  // Create multiple DAG buffers
-  const dagBuffers: GPUBuffer[] = [];
-  for (let i = 0; i < numBuffers; i++) {
-    const startItem = i * itemsPerBuffer;
-    const endItem = Math.min((i + 1) * itemsPerBuffer, dagItems);
-    const actualItems = endItem - startItem;
-    const actualBytes = actualItems * 64;
-
-    console.log(`  Buffer ${i}: items ${startItem.toLocaleString()}-${endItem.toLocaleString()} (${(actualBytes / 1e9).toFixed(2)} GB)`);
-
-    const buffer = device.createBuffer({
-      size: actualBytes,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-
-    // Copy slice of DAG into this buffer
-    const startByte = startItem * 64;
-    const dagSlice = new Uint32Array(dag.buffer, dag.byteOffset + startByte, actualItems * 16);
-    device.queue.writeBuffer(buffer, 0, dagSlice);
-
-    dagBuffers.push(buffer);
-  }
-
-  console.log(`✓ DAG uploaded to ${numBuffers} GPU buffer(s)`);
 
   return {
     cache,

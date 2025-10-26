@@ -25,7 +25,7 @@ export async function generateDAGGPU(
   epoch: number,
   device: GPUDevice,
   onProgress?: (progress: DAGGenerationProgress) => void
-): Promise<{ dag: Uint32Array; dagBuffer: GPUBuffer }> {
+): Promise<{ dag: Uint32Array; dagBuffers: GPUBuffer[] }> {
   console.log(`[DAG-GPU] Starting GPU DAG generation for epoch ${epoch}...`);
 
   // Step 1: Generate cache on CPU
@@ -61,12 +61,28 @@ export async function generateDAGGPU(
   new Uint32Array(cacheBuffer.getMappedRange()).set(cacheU32);
   cacheBuffer.unmap();
 
-  // Step 4: Create DAG output buffer
-  // IMPORTANT: Use COPY_SRC so we can read it back AND verify data was written
-  const dagBuffer = device.createBuffer({
-    size: datasetBytes,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-  });
+  // Step 4: Create DAG output buffers (split if >2.15 GB)
+  const maxBufferSize = device.limits.maxStorageBufferBindingSize;
+  const numBuffers = Math.ceil(datasetBytes / maxBufferSize);
+  const itemsPerBuffer = Math.ceil(numDAGItems / numBuffers);
+
+  console.log(`[DAG-GPU] Splitting DAG into ${numBuffers} buffer(s) (max ${(maxBufferSize / 1024 / 1024 / 1024).toFixed(2)} GB each)`);
+
+  const dagBuffers: GPUBuffer[] = [];
+  for (let i = 0; i < numBuffers; i++) {
+    const startItem = i * itemsPerBuffer;
+    const endItem = Math.min((i + 1) * itemsPerBuffer, numDAGItems);
+    const actualItems = endItem - startItem;
+    const actualBytes = actualItems * HASH_BYTES;
+
+    const buffer = device.createBuffer({
+      size: actualBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+    });
+
+    dagBuffers.push(buffer);
+    console.log(`[DAG-GPU]   Buffer ${i}: ${actualItems.toLocaleString()} items (${(actualBytes / 1024 / 1024 / 1024).toFixed(2)} GB)`);
+  }
 
   // Step 5: Calculate workgroup dispatch
   const itemsPerWorkgroup = 32;
@@ -137,54 +153,102 @@ export async function generateDAGGPU(
     compute: { module: shaderModule, entryPoint: 'main' },
   });
 
-  // Step 7: Create bind group
-  const bindGroup = device.createBindGroup({
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: cacheBuffer } },
-      { binding: 1, resource: { buffer: dagBuffer } },
-      { binding: 2, resource: { buffer: paramsBuffer } },
-    ],
-  });
-
-  // Step 8: Dispatch GPU kernel
+  // Step 7-8: Generate DAG in chunks (one chunk per buffer)
   const startTime = Date.now();
-  const commandEncoder = device.createCommandEncoder();
-  const passEncoder = commandEncoder.beginComputePass();
-  passEncoder.setPipeline(pipeline);
-  passEncoder.setBindGroup(0, bindGroup);
+  const dagDataChunks: Uint32Array[] = [];
 
-  console.log(`[DAG-GPU] Total workgroups needed: ${totalWorkgroups.toLocaleString()}`);
-  console.log(`[DAG-GPU] Dispatching ${workgroupsX} x ${workgroupsY} = ${workgroupsX * workgroupsY} workgroups (${numDAGItems.toLocaleString()} items)`);
+  console.log(`[DAG-GPU] Generating ${numBuffers} chunk(s)...`);
 
-  passEncoder.dispatchWorkgroups(workgroupsX, workgroupsY, 1);
-  passEncoder.end();
+  for (let bufferIdx = 0; bufferIdx < numBuffers; bufferIdx++) {
+    const startItem = bufferIdx * itemsPerBuffer;
+    const endItem = Math.min((bufferIdx + 1) * itemsPerBuffer, numDAGItems);
+    const chunkItems = endItem - startItem;
+    const chunkBytes = chunkItems * HASH_BYTES;
 
-  // Step 9: Read back DAG from GPU
-  console.log(`[DAG-GPU] Reading DAG from GPU...`);
-  const stagingBuffer = device.createBuffer({
-    size: datasetBytes,
-    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-  });
+    console.log(`[DAG-GPU] Chunk ${bufferIdx + 1}/${numBuffers}: items ${startItem.toLocaleString()}-${endItem.toLocaleString()}`);
 
-  // Copy the compute output to staging buffer - this happens AFTER compute shader finishes
-  const copyEncoder = device.createCommandEncoder();
-  copyEncoder.copyBufferToBuffer(dagBuffer, 0, stagingBuffer, 0, datasetBytes);
+    // Update params for this chunk
+    const chunkParamsBuffer = device.createBuffer({
+      size: 20,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    const chunkParams = new Uint32Array(chunkParamsBuffer.getMappedRange());
+    chunkParams[0] = numCacheItems;
+    chunkParams[1] = chunkItems;        // Number of items in THIS chunk
+    chunkParams[2] = workgroupsX;
+    chunkParams[3] = itemsPerWorkgroup;
+    chunkParams[4] = startItem;         // Offset for DAG item indices
+    chunkParamsBuffer.unmap();
 
-  // Submit BOTH commands together so they execute in order
-  device.queue.submit([commandEncoder.finish(), copyEncoder.finish()]);
+    // Create bind group for this chunk
+    const bindGroup = device.createBindGroup({
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: cacheBuffer } },
+        { binding: 1, resource: { buffer: dagBuffers[bufferIdx] } },
+        { binding: 2, resource: { buffer: chunkParamsBuffer } },
+      ],
+    });
 
-  await stagingBuffer.mapAsync(GPUMapMode.READ);
-  const dagData = new Uint32Array(stagingBuffer.getMappedRange()).slice();
-  stagingBuffer.unmap();
+    // Dispatch compute for this chunk
+    const chunkWorkgroups = Math.ceil(chunkItems / itemsPerWorkgroup);
+    let chunkWorkgroupsX = chunkWorkgroups;
+    let chunkWorkgroupsY = 1;
+
+    if (chunkWorkgroupsX > 65535) {
+      chunkWorkgroupsY = Math.ceil(chunkWorkgroupsX / 65535);
+      chunkWorkgroupsX = Math.ceil(chunkWorkgroups / chunkWorkgroupsY);
+    }
+
+    const commandEncoder = device.createCommandEncoder();
+    const passEncoder = commandEncoder.beginComputePass();
+    passEncoder.setPipeline(pipeline);
+    passEncoder.setBindGroup(0, bindGroup);
+    passEncoder.dispatchWorkgroups(chunkWorkgroupsX, chunkWorkgroupsY, 1);
+    passEncoder.end();
+
+    // Read back this chunk
+    const stagingBuffer = device.createBuffer({
+      size: chunkBytes,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    const copyEncoder = device.createCommandEncoder();
+    copyEncoder.copyBufferToBuffer(dagBuffers[bufferIdx], 0, stagingBuffer, 0, chunkBytes);
+
+    device.queue.submit([commandEncoder.finish(), copyEncoder.finish()]);
+
+    await stagingBuffer.mapAsync(GPUMapMode.READ);
+    const chunkData = new Uint32Array(stagingBuffer.getMappedRange()).slice();
+    stagingBuffer.unmap();
+
+    dagDataChunks.push(chunkData);
+
+    // Cleanup temp buffers
+    stagingBuffer.destroy();
+    chunkParamsBuffer.destroy();
+
+    // Progress callback
+    if (onProgress) {
+      const itemsCompleted = endItem;
+      const progress = Math.floor((itemsCompleted / numDAGItems) * 100);
+      onProgress({
+        progress,
+        itemsCompleted,
+        totalItems: numDAGItems,
+        itemsPerSecond: itemsCompleted / ((Date.now() - startTime) / 1000),
+      });
+    }
+  }
 
   const totalTime = (Date.now() - startTime) / 1000;
   console.log(`[DAG-GPU] ✓ DAG generation complete: ${(datasetBytes / 1024 / 1024 / 1024).toFixed(2)} GB in ${totalTime.toFixed(1)}s`);
 
-  // Verify DAG has non-zero data
+  // Verify first chunk has non-zero data
   let nonZeroCount = 0;
-  for (let i = 0; i < Math.min(dagData.length, 1000); i++) {
-    if (dagData[i] !== 0) nonZeroCount++;
+  for (let i = 0; i < Math.min(dagDataChunks[0].length, 1000); i++) {
+    if (dagDataChunks[0][i] !== 0) nonZeroCount++;
   }
   console.log(`[DAG-GPU] Verification: ${nonZeroCount}/1000 first u32s are non-zero`);
   if (nonZeroCount === 0) {
@@ -194,22 +258,56 @@ export async function generateDAGGPU(
   // Cleanup temp buffers
   cacheBuffer.destroy();
   paramsBuffer.destroy();
-  stagingBuffer.destroy();
-  dagBuffer.destroy(); // Destroy the compute output buffer
 
-  // dagData is the readback copy - use this to create a fresh GPU buffer for Hashimoto
-  const dag = new Uint32Array(dagData.buffer, dagData.byteOffset, datasetBytes / 4);
+  // Create a minimal DAG array for metadata (just store the chunks without combining)
+  // This avoids allocating 2.56+ GB in browser memory
+  console.log(`[DAG-GPU] Creating DAG metadata (keeping ${dagDataChunks.length} chunks separate to save memory)...`);
 
-  // Create a NEW GPU buffer with the actual DAG data for Hashimoto to use
-  console.log(`[DAG-GPU] Creating final GPU buffer with DAG data for Hashimoto...`);
-  const finalDAGBuffer = device.createBuffer({
-    size: datasetBytes,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
-    mappedAtCreation: true,
-  });
-  new Uint32Array(finalDAGBuffer.getMappedRange()).set(dag);
-  finalDAGBuffer.unmap();
+  // Create a view that concatenates chunks without extra allocation
+  // Note: This is a virtual view - chunks stay separate in memory
+  const dag = {
+    length: numDAGItems * 16,
+    byteLength: datasetBytes,
+    chunks: dagDataChunks,
+    // Implement array-like access for compatibility
+    subarray(start: number, end?: number) {
+      // This is only used for buffer slicing during setup
+      const chunkSize = dagDataChunks[0].length;
+      const chunkIdx = Math.floor(start / chunkSize);
+      const offsetInChunk = start % chunkSize;
+      const actualEnd = end ?? this.length;
+      const length = actualEnd - start;
 
-  console.log(`[DAG-GPU] Returning DAG: GPU buffer ready for Hashimoto`);
-  return { dag, dagBuffer: finalDAGBuffer };
+      if (chunkIdx >= dagDataChunks.length) {
+        return new Uint32Array(0);
+      }
+
+      // Simple case: within single chunk
+      if (Math.floor((actualEnd - 1) / chunkSize) === chunkIdx) {
+        return dagDataChunks[chunkIdx].subarray(offsetInChunk, offsetInChunk + length);
+      }
+
+      // Cross-chunk case: need to allocate
+      const result = new Uint32Array(length);
+      let resultOffset = 0;
+      let remaining = length;
+      let currentChunk = chunkIdx;
+      let currentOffset = offsetInChunk;
+
+      while (remaining > 0 && currentChunk < dagDataChunks.length) {
+        const available = dagDataChunks[currentChunk].length - currentOffset;
+        const toCopy = Math.min(remaining, available);
+        result.set(dagDataChunks[currentChunk].subarray(currentOffset, currentOffset + toCopy), resultOffset);
+        resultOffset += toCopy;
+        remaining -= toCopy;
+        currentChunk++;
+        currentOffset = 0;
+      }
+
+      return result;
+    }
+  } as any as Uint32Array;
+
+  console.log(`[DAG-GPU] Returning ${dagBuffers.length} DAG buffer(s) ready for Hashimoto`);
+  return { dag, dagBuffers };
 }

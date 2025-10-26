@@ -43,7 +43,7 @@ async function runTest() {
 
     const epoch = 200;
     log(`Setting up Hashimoto for epoch ${epoch}...`);
-    log('(This will take ~2-3 minutes to generate 2.56 GB DAG)\n');
+    log('(This will take ~3-5 minutes to generate 2.56 GB DAG in 2 chunks)\n');
 
     const setupStart = performance.now();
     const setup = await setupHashimotoGPU(epoch, device);

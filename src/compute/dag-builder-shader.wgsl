@@ -21,30 +21,37 @@
 // ============ DAG Builder Shader ============
 @group(0) @binding(0) var<storage, read> cache: array<u32>;        // Cache: 16 u32s per item
 @group(0) @binding(1) var<storage, read_write> dag: array<u32>;    // DAG output: 16 u32s per item
-@group(0) @binding(2) var<uniform> params: vec4<u32>;              // x=num_cache_items, y=num_dag_items, z=workgroupsX, w=items_per_workgroup
+
+// params.x = num_cache_items
+// params.y = num_dag_items (in this chunk)
+// params.z = workgroupsX
+// params.w = items_per_workgroup
+struct Params {
+  num_cache_items: u32,
+  num_dag_items: u32,
+  workgroups_x: u32,
+  items_per_workgroup: u32,
+  dag_offset: u32,  // Global DAG item offset for this chunk
+}
+
+@group(0) @binding(2) var<uniform> params: Params;
 
 @compute @workgroup_size(32)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
         @builtin(workgroup_id) workgroup_id: vec3<u32>,
         @builtin(local_invocation_index) local_idx: u32) {
-  // Compute flat DAG item index from 3D invocation ID
-  // Dispatch is (workgroupsX, workgroupsY, 1) with workgroup_size=32
-  // Each workgroup has 32 invocations
-  // Item index = (workgroup_id.y * workgroupsX * 32) + (workgroup_id.x * 32) + local_idx
+  // Compute flat DAG item index within this chunk
+  let chunk_item_idx = (workgroup_id.y * params.workgroups_x * params.items_per_workgroup) + (workgroup_id.x * params.items_per_workgroup) + local_idx;
 
-  let num_cache_items = params.x;
-  let num_dag_items = params.y;
-  let workgroups_x = params.z;
-  let items_per_workgroup = params.w;
-
-  let dag_item_idx = (workgroup_id.y * workgroups_x * items_per_workgroup) + (workgroup_id.x * items_per_workgroup) + local_idx;
-
-  if (dag_item_idx >= num_dag_items) {
+  if (chunk_item_idx >= params.num_dag_items) {
     return;
   }
 
+  // Global DAG item index (for cache lookups and algorithm)
+  let dag_item_idx = params.dag_offset + chunk_item_idx;
+
   // Step 1: mix = cache[dag_item_idx % num_cache_items]
-  let cache_idx = dag_item_idx % num_cache_items;
+  let cache_idx = dag_item_idx % params.num_cache_items;
   var mix: array<u32, 16>;
   for (var i = 0u; i < 16u; i = i + 1u) {
     mix[i] = cache[cache_idx * 16u + i];
@@ -69,7 +76,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
   // Step 4: FNV mixing with 256 cache parents
   for (var j = 0u; j < 256u; j = j + 1u) {
     let cache_index_value = fnv(dag_item_idx ^ j, mix[j % 16u]);
-    let parent_cache_idx = cache_index_value % num_cache_items;
+    let parent_cache_idx = cache_index_value % params.num_cache_items;
 
     var parent: array<u32, 16>;
     for (var i = 0u; i < 16u; i = i + 1u) {
@@ -89,8 +96,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>,
   mix_padded_final[17u] = 0x80000000u;  // End marker byte at position 71
   let result = keccak512(mix_padded_final);
 
-  // Write to DAG
+  // Write to DAG (use chunk_item_idx for buffer offset)
   for (var i = 0u; i < 16u; i = i + 1u) {
-    dag[dag_item_idx * 16u + i] = result[i];
+    dag[chunk_item_idx * 16u + i] = result[i];
   }
 }
