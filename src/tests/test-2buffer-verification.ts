@@ -71,8 +71,8 @@ async function runTest() {
     const headerHash = keccak256(headerBytes);
     const headerHashU32 = new Uint32Array(headerHash.buffer, headerHash.byteOffset, 8);
 
-    // Test with 100K nonces
-    const batchSize = 100000;
+    // Test with 1M nonces for better GPU saturation
+    const batchSize = 1000000;
     log(`Testing with ${batchSize.toLocaleString()} nonces...\n`);
 
     // Create reusable buffers (this should select the 2-buffer shader)

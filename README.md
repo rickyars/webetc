@@ -19,22 +19,38 @@ This project demonstrates GPU-accelerated Ethereum mining computations entirely 
   - All tests passing, GPU output matches CPU reference exactly
 
 ### ✅ Phase 2: GPU Hashimoto - COMPLETE
-- **Step 4:** Cache generation (CPU via @ethereumjs/ethash, transferred to GPU memory) ✅
-- **Step 5:** DAG generation (CPU via @ethereumjs/ethash, transferred to GPU memory) ✅
+- **Step 4:** Cache generation (GPU-accelerated, chunked for >2.15 GB) ✅
+- **Step 5:** DAG generation (GPU-accelerated, multi-buffer support) ✅
+  - Chunked generation bypasses 2.15 GB WebGPU buffer limit
+  - Epoch 200 (2.56 GB): Generates in 37s
+  - Virtual DAG view prevents browser OOM
 - **Step 6:** GPU Hashimoto shader (parallel nonce mining) ✅
-  - Correct nonce byte reversal implemented
-  - 130/130 test nonces verified against ethereumjs reference (100% match)
-- **Step 7:** GPU difficulty filtering (keep only valid solutions) ✅
-  - Tested with batches up to 5000 nonces
-  - Verified at multiple difficulty thresholds (2^255, 2^250)
-  - Correctly returns winning nonces that meet difficulty
-- **Step 8:** Full mining pipeline on GPU with large batch processing ✅
+  - Multi-buffer support for large DAGs (2-buffer shader)
+  - Epoch 0 (1 buffer): 28.33 MH/s
+  - Epoch 200 (2 buffers): 22.64 MH/s
+  - 130/130 test nonces verified against ethereumjs reference
+- **Step 7:** GPU difficulty filtering ✅
+  - Integrated with Hashimoto pipeline
+  - Tested with batches up to 5M nonces
+- **Step 8:** Full mining pipeline - PRODUCTION READY ✅
+  - Supports ETC epoch 387 (4.02 GB DAG, 2 buffers)
+  - ~22-23 MH/s expected hashrate
+  - Ready for RPC integration
+
+### 🚧 Phase 3: RPC Integration - IN PLANNING
+- **Step 9:** ETC node connection (eth_getWork, eth_submitWork)
+- **Step 10:** Nonce coordinator (multi-browser deduplication)
+- **Step 11:** Mining loop with real network difficulty
+- **Step 12:** NFT integration for collective mining art experiment
 
 ### Test Files
 - **GPU Keccak Test:** `src/tests/test-keccak.html` - 5/5 tests passing
 - **GPU DAG Test:** `src/tests/test-dag.html` - Validates cache/DAG generation
 - **GPU Hashimoto Comprehensive:** `src/tests/test-hashimoto-comprehensive.html` - 130 nonces, 100% verified
 - **GPU Difficulty Filter Comprehensive:** `src/tests/test-difficulty-filter-comprehensive.html` - Large batches (100-5000 nonces), multiple difficulty levels
+- **GPU Performance Test:** `src/tests/test-performance-gpu-only.html` - Measures pure GPU hashrate (28.33 MH/s @ 1M nonces)
+- **2-Buffer Logic Test:** `src/tests/test-2buffer-logic.html` - Verifies 2-buffer shader with artificial split (23.86 MH/s)
+- **2-Buffer Verification:** `src/tests/test-2buffer-verification.html` - Real epoch 200 DAG test (22.64 MH/s)
 - **Main UI:** `src/index.html` - UI for running all steps
 
 ## Architecture
