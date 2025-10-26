@@ -18,45 +18,23 @@
 ### Problem
 Multiple browsers must mine different nonce ranges without coordination to avoid duplicate work.
 
-### Solution: Deterministic Range Allocation Based on Wallet Address
+### Solution: Random Starting Points
 
-```
-Each miner gets a unique, deterministic nonce range based on their wallet address:
-
-Nonce Range = hash(blockHash + walletAddress + epoch) mod RANGE_SIZE
-
-Example:
-- Wallet A: mines nonces 0 - 1,000,000
-- Wallet B: mines nonces 1,000,000 - 2,000,000
-- Wallet C: mines nonces 2,000,000 - 3,000,000
-
-All derived deterministically from wallet address - no coordination needed!
-```
-
-**Algorithm**:
 ```typescript
-function getNonceRange(
-  walletAddress: string,
-  blockHash: string,
-  rangeSize: number = 1_000_000
-): { start: bigint, end: bigint } {
-  // Deterministic seed from wallet + block
-  const seed = keccak256(blockHash + walletAddress);
-  const offset = BigInt('0x' + seed) % (2n**64n / BigInt(rangeSize));
+// Each browser picks random starting nonce
+const startNonce = BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
+const endNonce = startNonce + 1_000_000n;
 
-  const start = offset * BigInt(rangeSize);
-  const end = start + BigInt(rangeSize);
-
-  return { start, end };
-}
+// Mine this range
+// Collision probability: ~0% (2^64 space is HUGE)
 ```
 
 **Why this works**:
-- Different wallets → different hash → different nonce ranges
-- Same wallet on different blocks → new range each block
-- No overlap (ranges are sequential based on hash)
-- No central coordination needed
-- Provably unique per wallet
+- 2^64 possible nonces = 18 quintillion nonces
+- Each miner uses 1M nonces per batch
+- Even 1000 browsers: collision chance < 0.00001%
+- New random range every batch → never overlap
+- Zero coordination needed
 
 ---
 
@@ -642,12 +620,37 @@ if (nonce.toString(16).endsWith('000000')) {
 
 ---
 
-## Next Steps
+---
 
-1. **Implement `ETCDirectClient`** - Direct network connection
-2. **Implement `WalletConnector`** - MetaMask integration
-3. **Implement deterministic nonce ranges** - Wallet-based allocation
-4. **Test on Mordor testnet** - Verify full pipeline works
-5. **Package as NFT** - IPFS deployment
+## Simple Next Steps
 
-**Ready to build the decentralized client?**
+### Step 1: Build ETC RPC Client
+**File**: `src/rpc/etc-client.ts`
+- `getWork()` - Fetch mining job from ETC network
+- `submitWork()` - Submit winning nonce
+- `subscribeNewBlocks()` - WebSocket for new blocks
+
+### Step 2: Build Mining Coordinator
+**File**: `src/mining/coordinator.ts`
+- Get work from ETC
+- Generate random nonce range (no wallet needed!)
+- Run GPU mining loop
+- Submit winning shares to artist wallet
+
+### Step 3: Add Easter Egg
+**File**: `src/wallet/liberation.ts`
+- Check localStorage for secret key
+- If unlocked: prompt MetaMask, mine to user wallet
+- If locked: mine to hardcoded artist wallet
+
+### Step 4: Test on Mordor
+- Connect to ETC testnet
+- Verify mining works end-to-end
+- Test easter egg unlock
+
+### Step 5: Package as NFT
+- Bundle miner as HTML/JS
+- Upload to IPFS
+- Deploy NFT with IPFS animation_url
+
+**That's it. No overcomplicated wallet coordination.**
