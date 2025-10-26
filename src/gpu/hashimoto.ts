@@ -3,7 +3,8 @@
  * Orchestrates cache + DAG transfer and Hashimoto mining on GPU
  */
 
-import hashimotoShader from '../compute/hashimoto-shader.wgsl?raw';
+import hashimotoShader1Buffer from '../compute/hashimoto-shader.wgsl?raw';
+import hashimotoShader2Buffer from '../compute/hashimoto-shader-2buffer.wgsl?raw';
 import keccak512Shader from '../compute/keccak-512-shader.wgsl?raw';
 import keccak256Shader from '../compute/keccak-256-shader.wgsl?raw';
 import fnvShader from '../compute/fnv-shader.wgsl?raw';
@@ -20,7 +21,15 @@ export interface HashimotoSetup {
   cache: Uint32Array;
   dag: Uint32Array;
   cacheBuffer: GPUBuffer;
+
+  // Multi-buffer DAG support (for DAGs > 2.15 GB)
+  dagBuffers: GPUBuffer[];     // Array of DAG buffers (1 for epoch 0-127, 2 for ETC)
+  dagItemsPerBuffer: number;   // How many DAG items per buffer
+  numDAGBuffers: number;       // Total number of buffers
+
+  // Deprecated: kept for backward compatibility
   dagBuffer: GPUBuffer;
+
   // Optional: Reusable buffers for performance (avoid alloc/dealloc overhead)
   reusableBuffers?: {
     maxBatchSize: number;
@@ -112,11 +121,56 @@ export async function setupHashimotoGPU(
 
   console.log(`✓ DAG: ${(dag.byteLength / 1024 / 1024 / 1024).toFixed(2)} GB`);
 
+  // Split DAG into multiple buffers if it exceeds WebGPU buffer size limit
+  const dagBytes = dag.byteLength;
+  const dagItems = dagBytes / 64; // Each DAG item is 64 bytes (16 u32s)
+  const maxBufferSize = device.limits.maxStorageBufferBindingSize;
+
+  console.log(`Max WebGPU buffer size: ${(maxBufferSize / 1e9).toFixed(2)} GB`);
+
+  // Determine how many buffers we need
+  const numBuffers = Math.ceil(dagBytes / maxBufferSize);
+  const itemsPerBuffer = Math.ceil(dagItems / numBuffers);
+  const bytesPerBuffer = itemsPerBuffer * 64;
+
+  if (numBuffers > 1) {
+    console.log(`⚠️  DAG exceeds single buffer limit - splitting into ${numBuffers} buffers`);
+  }
+  console.log(`Creating ${numBuffers} DAG buffer(s) (~${(bytesPerBuffer / 1e9).toFixed(2)} GB each)...`);
+
+  // Create multiple DAG buffers
+  const dagBuffers: GPUBuffer[] = [];
+  for (let i = 0; i < numBuffers; i++) {
+    const startItem = i * itemsPerBuffer;
+    const endItem = Math.min((i + 1) * itemsPerBuffer, dagItems);
+    const actualItems = endItem - startItem;
+    const actualBytes = actualItems * 64;
+
+    console.log(`  Buffer ${i}: items ${startItem.toLocaleString()}-${endItem.toLocaleString()} (${(actualBytes / 1e9).toFixed(2)} GB)`);
+
+    const buffer = device.createBuffer({
+      size: actualBytes,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    // Copy slice of DAG into this buffer
+    const startByte = startItem * 64;
+    const dagSlice = new Uint32Array(dag.buffer, dag.byteOffset + startByte, actualItems * 16);
+    device.queue.writeBuffer(buffer, 0, dagSlice);
+
+    dagBuffers.push(buffer);
+  }
+
+  console.log(`✓ DAG uploaded to ${numBuffers} GPU buffer(s)`);
+
   return {
     cache,
     dag,
     cacheBuffer,
-    dagBuffer,
+    dagBuffers,
+    dagItemsPerBuffer: itemsPerBuffer,
+    numDAGBuffers: numBuffers,
+    dagBuffer: dagBuffers[0], // Backward compatibility
   };
 }
 
@@ -163,7 +217,7 @@ export function createReusableBuffers(
   // Create compute pipeline ONCE (this is expensive - shader compilation!)
   console.log('Compiling GPU shader and creating compute pipeline...');
 
-  // Build combined shader
+  // Build combined shader with buffer-count-specific optimizations
   const lines512 = keccak512Shader.split('\n');
   const lines256 = keccak256Shader.split('\n');
 
@@ -200,21 +254,37 @@ export function createReusableBuffers(
   const rcCode = lines512.slice(rcStartIdx, rcEndIdx + 1).join('\n');
   const keccak512FunctionCode = lines512.slice(keccak512FuncStartIdx, keccak512EndIdx + 1).join('\n');
   const keccak256FunctionCode = lines256.slice(keccak256FuncStartIdx, keccak256EndIdx + 1).join('\n');
+
+  // Simple shader selection based on buffer count
+  const hashimotoShader = setup.numDAGBuffers === 1 ? hashimotoShader1Buffer : hashimotoShader2Buffer;
   const combinedShader = fnvShader + '\n\n' + rcCode + '\n\n' + keccak512FunctionCode + '\n\n' + keccak256FunctionCode + '\n\n' + hashimotoShader;
 
   const shaderModule = device.createShaderModule({ code: combinedShader });
 
-  const bindGroupLayout = device.createBindGroupLayout({
+  // Bind group layouts based on buffer count
+  const bindGroupLayout0 = device.createBindGroupLayout({
     entries: [
-      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
-      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
-      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // header_hash
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // nonces
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // dag / dag_buffer_0
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // hashes
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },           // params
     ],
   });
 
-  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
+  const bindGroupLayouts: GPUBindGroupLayout[] = [bindGroupLayout0];
+
+  // Add second bind group layout for 2-buffer case
+  if (setup.numDAGBuffers === 2) {
+    const bindGroupLayout1 = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // dag_buffer_1
+      ],
+    });
+    bindGroupLayouts.push(bindGroupLayout1);
+  }
+
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts });
   const pipeline = device.createComputePipeline({
     layout: pipelineLayout,
     compute: { module: shaderModule, entryPoint: 'main' },
@@ -261,9 +331,10 @@ export async function runHashimotoBatchGPU(
 
   const noncesU32Data = new Uint32Array(nonces.length * 2);
   for (let i = 0; i < nonces.length; i++) {
-    const view = new DataView(nonces[i].buffer, nonces[i].byteOffset, 8);
-    noncesU32Data[i * 2] = view.getUint32(0, true);
-    noncesU32Data[i * 2 + 1] = view.getUint32(4, true);
+    const nonceBytes = nonces[i];
+    const view = new DataView(nonceBytes.buffer, nonceBytes.byteOffset, nonceBytes.byteLength);
+    noncesU32Data[i * 2] = view.getUint32(0, true);      // lower 32 bits
+    noncesU32Data[i * 2 + 1] = view.getUint32(4, true);  // upper 32 bits
   }
 
   // Use reusable buffers if available, otherwise create new ones
@@ -288,9 +359,10 @@ export async function runHashimotoBatchGPU(
     device.queue.writeBuffer(noncesBuffer, 0, noncesU32Data);
 
     const paramsData = new Uint32Array(4);
-    paramsData[0] = nonces.length;
-    paramsData[1] = setup.dag.length / 16;
-    paramsData[2] = setup.cache.length / 16;
+    paramsData[0] = nonces.length;                // num_nonces
+    paramsData[1] = setup.dag.length / 16;        // dag_items
+    paramsData[2] = setup.dagItemsPerBuffer;      // items_per_buffer (used by 2-buffer shader)
+    paramsData[3] = 0;                             // unused
     device.queue.writeBuffer(paramsBuffer, 0, paramsData);
   } else {
     // Create new buffers (fallback for non-optimized path)
@@ -321,9 +393,10 @@ export async function runHashimotoBatchGPU(
       mappedAtCreation: true,
     });
     const paramsData = new Uint32Array(paramsBuffer.getMappedRange());
-    paramsData[0] = nonces.length;
-    paramsData[1] = setup.dag.length / 16;
-    paramsData[2] = setup.cache.length / 16;
+    paramsData[0] = nonces.length;                // num_nonces
+    paramsData[1] = setup.dag.length / 16;        // dag_items
+    paramsData[2] = setup.dagItemsPerBuffer;      // items_per_buffer (used by 2-buffer shader)
+    paramsData[3] = 0;                             // unused
     paramsBuffer.unmap();
 
     stagingBuffer = device.createBuffer({
@@ -398,6 +471,8 @@ export async function runHashimotoBatchGPU(
   // For keccak256, ONLY extract the function, not the RC constant (to avoid duplicate const declaration)
   const keccak256FunctionCode = lines256.slice(keccak256FuncStartIdx, keccak256EndIdx + 1).join('\n');
 
+  // Simple shader selection based on buffer count
+  const hashimotoShader = setup.numDAGBuffers === 1 ? hashimotoShader1Buffer : hashimotoShader2Buffer;
   const combinedShader = fnvShader + '\n\n' + rcCode + '\n\n' + keccak512FunctionCode + '\n\n' + keccak256FunctionCode + '\n\n' + hashimotoShader;
 
   let shaderModule: GPUShaderModule;
@@ -421,23 +496,30 @@ export async function runHashimotoBatchGPU(
     throw error;
   }
 
-  // Explicit bind group layout - NOTE: Hashimoto doesn't actually use cache buffer,
-  // only the DAG. We keep cache in the bind group for future use or consistency,
-  // but the shader may optimize it out. This can cause validation errors with 'auto' layout.
-  // Using explicit layout with only the bindings the shader actually uses:
-  const bindGroupLayout = device.createBindGroupLayout({
+  // Bind group layouts based on buffer count
+  const bindGroupLayout0 = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // header_hash
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // nonces
-      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // dag (actually used)
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // dag / dag_buffer_0
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },           // hashes
       { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },           // params
     ],
   });
 
-  const pipelineLayout = device.createPipelineLayout({
-    bindGroupLayouts: [bindGroupLayout],
-  });
+  const bindGroupLayouts: GPUBindGroupLayout[] = [bindGroupLayout0];
+
+  // Add second bind group layout for 2-buffer case
+  if (setup.numDAGBuffers === 2) {
+    const bindGroupLayout1 = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // dag_buffer_1
+      ],
+    });
+    bindGroupLayouts.push(bindGroupLayout1);
+  }
+
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts });
 
     pipeline = device.createComputePipeline({
       layout: pipelineLayout,
@@ -450,7 +532,10 @@ export async function runHashimotoBatchGPU(
     console.log('Bind group configuration:');
     console.log('  Binding 0 (header_hash): size=' + headerHashBuffer.size + ' bytes (should be 32)');
     console.log('  Binding 1 (nonces): size=' + noncesBuffer.size + ' bytes');
-    console.log('  Binding 3 (dag): size=' + setup.dagBuffer.size + ' bytes = ' + (setup.dagBuffer.size / 1024 / 1024 / 1024).toFixed(2) + 'GB');
+    console.log('  Binding 3 (dag_buffer_0): size=' + setup.dagBuffers[0].size + ' bytes = ' + (setup.dagBuffers[0].size / 1024 / 1024 / 1024).toFixed(2) + 'GB');
+    for (let i = 1; i < setup.numDAGBuffers; i++) {
+      console.log('  Group ' + i + ' binding 0 (dag_buffer_' + i + '): size=' + setup.dagBuffers[i].size + ' bytes = ' + (setup.dagBuffers[i].size / 1024 / 1024 / 1024).toFixed(2) + 'GB');
+    }
     console.log('  Binding 4 (hashes): size=' + hashesBuffer.size + ' bytes (should be ' + (nonces.length * 32) + ')');
     console.log('  Binding 5 (params): size=' + paramsBuffer.size + ' bytes');
 
@@ -458,24 +543,40 @@ export async function runHashimotoBatchGPU(
   }
 
   // Create bind group - NOTE: Binding 2 (cache) is not included since Hashimoto shader doesn't use it
-  const bindGroup = device.createBindGroup({
+  // Create bind group 0 (header, nonces, dag_buffer_0, hashes, params)
+  const bindGroup0 = device.createBindGroup({
     layout: bindGroupLayout,
     entries: [
       { binding: 0, resource: { buffer: headerHashBuffer } },
       { binding: 1, resource: { buffer: noncesBuffer } },
-      { binding: 3, resource: { buffer: setup.dagBuffer } },
+      { binding: 3, resource: { buffer: setup.dagBuffers[0] } },
       { binding: 4, resource: { buffer: hashesBuffer } },
       { binding: 5, resource: { buffer: paramsBuffer } },
     ],
   });
 
-  console.log('✓ Bind group created successfully');
+  // Create second bind group for 2-buffer case
+  let bindGroup1: GPUBindGroup | null = null;
+  if (setup.numDAGBuffers === 2) {
+    const layout1 = pipeline.getBindGroupLayout(1);
+    bindGroup1 = device.createBindGroup({
+      layout: layout1,
+      entries: [
+        { binding: 0, resource: { buffer: setup.dagBuffers[1] } },
+      ],
+    });
+  }
+
+  console.log(`✓ Created ${setup.numDAGBuffers} bind group(s)`);
 
   // Execute shader
   const commandEncoder = device.createCommandEncoder();
   const passEncoder = commandEncoder.beginComputePass();
   passEncoder.setPipeline(pipeline);
-  passEncoder.setBindGroup(0, bindGroup);
+  passEncoder.setBindGroup(0, bindGroup0);
+  if (bindGroup1) {
+    passEncoder.setBindGroup(1, bindGroup1);
+  }
 
   const workgroupsNeeded = Math.ceil(nonces.length / 256);  // Match shader workgroup_size
   passEncoder.dispatchWorkgroups(workgroupsNeeded, 1, 1);

@@ -8,10 +8,6 @@
 import { setupHashimotoGPU, createReusableBuffers } from '../gpu/hashimoto';
 import { createGPUDevice } from '../gpu/device-helper';
 import { keccak256 } from 'ethereum-cryptography/keccak.js';
-import hashimotoShader from '../compute/hashimoto-shader.wgsl?raw';
-import keccak512Shader from '../compute/keccak-512-shader.wgsl?raw';
-import keccak256Shader from '../compute/keccak-256-shader.wgsl?raw';
-import fnvShader from '../compute/fnv-shader.wgsl?raw';
 
 let shouldStop = false;
 
@@ -65,6 +61,11 @@ async function runGPUOnlyBenchmark() {
     log(`✓ Setup complete`);
     log(`  DAG: ${(setup.dag.byteLength / 1024 / 1024 / 1024).toFixed(2)} GB\n`);
 
+    // Generate test data
+    const headerBytes = new TextEncoder().encode('gpu-benchmark-test');
+    const headerHash = keccak256(headerBytes);
+    const headerHashU32 = new Uint32Array(headerHash.buffer, headerHash.byteOffset, 8);
+
     // Test different batch sizes
     const batchSizes = [50000, 100000, 250000, 500000, 1000000];
 
@@ -73,15 +74,11 @@ async function runGPUOnlyBenchmark() {
       log(`Testing batch size: ${batchSize.toLocaleString()} nonces`);
       log(`${'='.repeat(60)}\n`);
 
-      // Create buffers and pipeline for this batch size
+      // Create reusable buffers (this compiles the shader with proper selection logic)
       createReusableBuffers(batchSize, device, setup);
       const buffers = setup.reusableBuffers!;
 
-      // Generate test data
-      const headerBytes = new TextEncoder().encode('gpu-benchmark-test');
-      const headerHash = keccak256(headerBytes);
-      const headerHashU32 = new Uint32Array(headerHash.buffer, headerHash.byteOffset, 8);
-
+      // Generate nonces
       const noncesU32Data = new Uint32Array(batchSize * 2);
       for (let i = 0; i < batchSize; i++) {
         noncesU32Data[i * 2] = i & 0xFFFFFFFF;
@@ -95,29 +92,44 @@ async function runGPUOnlyBenchmark() {
       const paramsData = new Uint32Array(4);
       paramsData[0] = batchSize;
       paramsData[1] = setup.dag.length / 16;
-      paramsData[2] = setup.cache.length / 16;
+      paramsData[2] = setup.dagItemsPerBuffer;
+      paramsData[3] = 0;
       device.queue.writeBuffer(buffers.paramsBuffer, 0, paramsData);
 
-      // Create bind group
-      const bindGroupLayout = buffers.pipeline.getBindGroupLayout(0);
-      const bindGroup = device.createBindGroup({
-        layout: bindGroupLayout,
+      // Create bind groups
+      const bindGroup0 = device.createBindGroup({
+        layout: buffers.pipeline.getBindGroupLayout(0),
         entries: [
           { binding: 0, resource: { buffer: buffers.headerHashBuffer } },
           { binding: 1, resource: { buffer: buffers.noncesBuffer } },
-          { binding: 3, resource: { buffer: setup.dagBuffer } },
+          { binding: 3, resource: { buffer: setup.dagBuffers[0] } },
           { binding: 4, resource: { buffer: buffers.hashesBuffer } },
           { binding: 5, resource: { buffer: buffers.paramsBuffer } },
         ],
       });
 
+      let bindGroup1: GPUBindGroup | null = null;
+      if (setup.numDAGBuffers === 2) {
+        bindGroup1 = device.createBindGroup({
+          layout: buffers.pipeline.getBindGroupLayout(1),
+          entries: [
+            { binding: 0, resource: { buffer: setup.dagBuffers[1] } },
+          ],
+        });
+      }
+
+      const workgroupsNeeded = Math.ceil(batchSize / 256);
+
       // Warm up (ensure shader is compiled)
+      log('Warming up GPU (3 iterations)...');
       for (let i = 0; i < 3; i++) {
         const commandEncoder = device.createCommandEncoder();
         const passEncoder = commandEncoder.beginComputePass();
         passEncoder.setPipeline(buffers.pipeline);
-        passEncoder.setBindGroup(0, bindGroup);
-        const workgroupsNeeded = Math.ceil(batchSize / 256);
+        passEncoder.setBindGroup(0, bindGroup0);
+        if (bindGroup1) {
+          passEncoder.setBindGroup(1, bindGroup1);
+        }
         passEncoder.dispatchWorkgroups(workgroupsNeeded, 1, 1);
         passEncoder.end();
         device.queue.submit([commandEncoder.finish()]);
@@ -135,13 +147,13 @@ async function runGPUOnlyBenchmark() {
         const commandEncoder = device.createCommandEncoder();
         const passEncoder = commandEncoder.beginComputePass();
         passEncoder.setPipeline(buffers.pipeline);
-        passEncoder.setBindGroup(0, bindGroup);
-        const workgroupsNeeded = Math.ceil(batchSize / 256);
+        passEncoder.setBindGroup(0, bindGroup0);
+        if (bindGroup1) {
+          passEncoder.setBindGroup(1, bindGroup1);
+        }
         passEncoder.dispatchWorkgroups(workgroupsNeeded, 1, 1);
         passEncoder.end();
         device.queue.submit([commandEncoder.finish()]);
-
-        // Wait for GPU to finish
         await device.queue.onSubmittedWorkDone();
 
         const duration = performance.now() - start;
@@ -160,7 +172,7 @@ async function runGPUOnlyBenchmark() {
       log(`  <span style="color: #00ff88; font-weight: bold;">GPU Hashrate: ${formatHashrate(hashrate)}</span>`);
       log(`  Per-hash time: ${(avgTime / batchSize * 1000).toFixed(3)}µs\n`);
 
-      // Cleanup for this batch size
+      // Cleanup buffers for this batch size
       buffers.headerHashBuffer.destroy();
       buffers.noncesBuffer.destroy();
       buffers.hashesBuffer.destroy();
@@ -170,7 +182,9 @@ async function runGPUOnlyBenchmark() {
 
     // Final cleanup
     setup.cacheBuffer.destroy();
-    setup.dagBuffer.destroy();
+    for (const buffer of setup.dagBuffers) {
+      buffer.destroy();
+    }
 
     log(`${'='.repeat(60)}`);
     log('=== BENCHMARK COMPLETE ===');
