@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live ETC Mining Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0e27;
+      color: #00ff41;
+      padding: 20px;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #00ff41;
+      margin-bottom: 10px;
+      font-size: 24px;
+      text-shadow: 0 0 10px #00ff41;
+    }
+
+    .subtitle {
+      color: #888;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+
+    .config-section {
+      background: #1a1f3a;
+      border: 1px solid #00ff41;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+
+    .config-section h2 {
+      color: #00ff41;
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      color: #888;
+      margin-bottom: 5px;
+      font-size: 12px;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 10px;
+      background: #0a0e27;
+      border: 1px solid #333;
+      border-radius: 4px;
+      color: #00ff41;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: #00ff41;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px 20px;
+      background: #00ff41;
+      color: #0a0e27;
+      border: none;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    button:hover {
+      background: #00cc33;
+      box-shadow: 0 0 20px #00ff41;
+    }
+
+    button:disabled {
+      background: #333;
+      color: #666;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    button.stop {
+      background: #ff4444;
+      color: white;
+    }
+
+    button.stop:hover {
+      background: #cc0000;
+      box-shadow: 0 0 20px #ff4444;
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .stat-card {
+      background: #1a1f3a;
+      border: 1px solid #00ff41;
+      border-radius: 8px;
+      padding: 15px;
+    }
+
+    .stat-card h3 {
+      color: #888;
+      font-size: 12px;
+      margin-bottom: 5px;
+      font-weight: normal;
+    }
+
+    .stat-card .value {
+      color: #00ff41;
+      font-size: 24px;
+      font-weight: bold;
+    }
+
+    .stat-card .value.success {
+      color: #00ff41;
+    }
+
+    .stat-card .value.error {
+      color: #ff4444;
+    }
+
+    .log-section {
+      background: #1a1f3a;
+      border: 1px solid #00ff41;
+      border-radius: 8px;
+      padding: 20px;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .log-section h2 {
+      color: #00ff41;
+      font-size: 18px;
+      margin-bottom: 15px;
+    }
+
+    .log-entry {
+      margin-bottom: 5px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .log-entry.info {
+      color: #888;
+    }
+
+    .log-entry.success {
+      color: #00ff41;
+    }
+
+    .log-entry.error {
+      color: #ff4444;
+    }
+
+    .log-entry.warning {
+      color: #ffaa00;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      margin-left: 10px;
+    }
+
+    .status.idle {
+      background: #333;
+      color: #888;
+    }
+
+    .status.initializing {
+      background: #ffaa00;
+      color: #000;
+    }
+
+    .status.mining {
+      background: #00ff41;
+      color: #000;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⛏️ Live ETC Mining Test</h1>
+    <p class="subtitle">Browser-based GPU mining with WebGPU</p>
+
+    <!-- Configuration -->
+    <div class="config-section">
+      <h2>⚙️ Configuration</h2>
+      <div class="form-group">
+        <label>Network</label>
+        <select id="network">
+          <option value="custom">Custom RPC (enter your own mining-enabled node)</option>
+          <option value="mainnet">ETC Mainnet (requires mining-enabled node)</option>
+          <option value="mordor">Mordor Testnet (may not have mining work)</option>
+        </select>
+      </div>
+      <div class="form-group" id="customEndpointGroup">
+        <label>Custom HTTP Endpoint (must support eth_getWork)</label>
+        <input type="text" id="customEndpoint" placeholder="http://localhost:8545" value="http://localhost:8545">
+      </div>
+      <div class="form-group">
+        <label>Batch Size (nonces per GPU batch)</label>
+        <input type="number" id="batchSize" value="1000000" min="1000" max="5000000" step="1000">
+      </div>
+      <div class="button-group">
+        <button id="startBtn">Start Mining</button>
+        <button id="stopBtn" class="stop" disabled>Stop Mining</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <h3>Status</h3>
+        <div class="value">
+          <span id="statusText">IDLE</span>
+          <span id="statusBadge" class="status idle">IDLE</span>
+        </div>
+      </div>
+      <div class="stat-card">
+        <h3>Hashrate</h3>
+        <div class="value" id="hashrate">0.00 MH/s</div>
+      </div>
+      <div class="stat-card">
+        <h3>Total Hashes</h3>
+        <div class="value" id="totalHashes">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Shares Found</h3>
+        <div class="value success" id="sharesFound">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Shares Accepted</h3>
+        <div class="value success" id="sharesAccepted">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Shares Rejected</h3>
+        <div class="value error" id="sharesRejected">0</div>
+      </div>
+      <div class="stat-card">
+        <h3>Current Block</h3>
+        <div class="value" id="currentBlock">-</div>
+      </div>
+      <div class="stat-card">
+        <h3>Uptime</h3>
+        <div class="value" id="uptime">0s</div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="log-section">
+      <h2>📜 Mining Log</h2>
+      <div id="log"></div>
+    </div>
+  </div>
+
+  <script type="module" src="./test-mining-live.ts"></script>
+</body>
+</html>
