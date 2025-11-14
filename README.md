@@ -114,8 +114,12 @@ webetc/
 │   ├── index.html                     # Main HTML template
 │   └── main.ts                        # Main entry point
 ├── dist/                              # Build output (auto-generated)
+├── docs/                              # Documentation
+│   ├── STRUCTURE.md                   # Codebase structure
+│   ├── DECENTRALIZED_ARCHITECTURE.md  # Decentralized mining architecture
+│   ├── MINING_QUICK_START.md          # Quick start guide
+│   └── RPC_INTEGRATION_PLAN.md        # RPC integration plan
 ├── CLAUDE.md                          # Project plan & roadmap
-├── STRUCTURE.md                       # Codebase structure documentation
 ├── README.md                          # This file
 └── package.json                       # Dependencies & scripts
 ```
@@ -285,9 +289,10 @@ These are **not** production code; actual implementations are GPU-based.
 ## References
 
 - [CLAUDE.md](CLAUDE.md) - Full project plan (GPU-first architecture)
-- [ETHASH_ALGORITHM_REFERENCE.md](ETHASH_ALGORITHM_REFERENCE.md) - Ethash algorithm details
-- [TESTING_GUIDE.md](TESTING_GUIDE.md) - Testing and validation procedures
-- [STATUS.md](STATUS.md) - Current implementation status
+- [docs/STRUCTURE.md](docs/STRUCTURE.md) - Codebase structure documentation
+- [docs/DECENTRALIZED_ARCHITECTURE.md](docs/DECENTRALIZED_ARCHITECTURE.md) - Decentralized mining architecture
+- [docs/MINING_QUICK_START.md](docs/MINING_QUICK_START.md) - Quick start guide
+- [docs/RPC_INTEGRATION_PLAN.md](docs/RPC_INTEGRATION_PLAN.md) - RPC integration plan
 - [WebGPU Specification](https://www.w3.org/TR/webgpu/)
 - [Ethash Specification](https://eth.wiki/en/concepts/ethash/ethash)
 - [SHA-3/Keccak Reference](https://keccak.team/)
